@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: openclaw
+    runtime: docker
+    plan: standard
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: OPENCLAW_STATE_DIR
+        value: /data/.openclaw
+      - key: OPENCLAW_WORKSPACE_DIR
+        value: /data/workspace
+      - key: OPENCLAW_GATEWAY_TOKEN
+        generateValue: true
+      # Primary AI providers (set at least one)
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      # Additional providers (optional)
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: MOONSHOT_API_KEY
+        sync: false
+      - key: MINIMAX_API_KEY
+        sync: false
+    disk:
+      name: openclaw-data
+      mountPath: /data
+      sizeGB: 5

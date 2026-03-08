@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -119,6 +120,8 @@ func ensureConfigured() {
 	configPath := stateDir + "/openclaw.json"
 	if _, err := os.Stat(configPath); err == nil {
 		log.Printf("Config exists at %s, skipping onboard", configPath)
+		applyRequiredConfig()
+		applyCpaConfigBootstrap(configPath)
 		return
 	}
 
@@ -176,6 +179,7 @@ func ensureConfigured() {
 
 	log.Printf("Onboard completed, applying additional config...")
 	applyRequiredConfig()
+	applyCpaConfigBootstrap(configPath)
 }
 
 func createMinimalConfig(configPath string) {
@@ -219,6 +223,236 @@ func applyRequiredConfig() {
 			log.Printf("Warning: config set failed for %v: %v", args, err)
 		}
 	}
+}
+
+type cpaModelEntry struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+var requiredCpaModels = []cpaModelEntry{
+	{ID: "gpt-5.4", Name: "ChatGPT 5.4"},
+	{ID: "gpt-5", Name: "ChatGPT 5"},
+	{ID: "gpt-5-codex", Name: "GPT-5 Codex"},
+	{ID: "gemini-3-flash", Name: "Gemini 3 Flash"},
+}
+
+var requiredAliases = map[string]string{
+	"cpa/gpt-5.4":        "chatgpt-5.4",
+	"cpa/gpt-5":          "chatgpt-5",
+	"cpa/gpt-5-codex":    "codex",
+	"cpa/gemini-3-flash": "gemini-flash",
+}
+
+func applyCpaConfigBootstrap(configPath string) {
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Printf("Skipping CPA bootstrap, could not read %s: %v", configPath, err)
+		return
+	}
+	if len(raw) >= 3 && raw[0] == 0xef && raw[1] == 0xbb && raw[2] == 0xbf {
+		raw = raw[3:]
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		log.Printf("Skipping CPA bootstrap, invalid JSON in %s: %v", configPath, err)
+		return
+	}
+
+	models, ok := ensureObject(cfg, "models")
+	if !ok {
+		log.Printf("Skipping CPA bootstrap, models section is invalid")
+		return
+	}
+	providers, ok := ensureObject(models, "providers")
+	if !ok {
+		log.Printf("Skipping CPA bootstrap, providers section is invalid")
+		return
+	}
+	cpaRaw, exists := providers["cpa"]
+	if !exists {
+		log.Printf("Skipping CPA bootstrap, models.providers.cpa is not configured")
+		return
+	}
+	cpa, ok := cpaRaw.(map[string]any)
+	if !ok {
+		log.Printf("Skipping CPA bootstrap, models.providers.cpa is invalid")
+		return
+	}
+
+	changed := false
+	if nextModels, modelChanged := mergeCpaModels(cpa["models"]); modelChanged {
+		cpa["models"] = nextModels
+		changed = true
+	}
+
+	agents, ok := ensureObject(cfg, "agents")
+	if !ok {
+		log.Printf("Skipping CPA bootstrap, agents section is invalid")
+		return
+	}
+	defaults, ok := ensureObject(agents, "defaults")
+	if !ok {
+		log.Printf("Skipping CPA bootstrap, agents.defaults section is invalid")
+		return
+	}
+	modelCfg, ok := ensureObject(defaults, "model")
+	if !ok {
+		log.Printf("Skipping CPA bootstrap, agents.defaults.model section is invalid")
+		return
+	}
+	if primary, _ := modelCfg["primary"].(string); strings.TrimSpace(primary) == "" || strings.HasPrefix(primary, "cpa/") {
+		if primary != "cpa/gpt-5.4" {
+			modelCfg["primary"] = "cpa/gpt-5.4"
+			changed = true
+		}
+	}
+
+	if ensureModelAliases(defaults) {
+		changed = true
+	}
+	if ensureCoderModel(agents) {
+		changed = true
+	}
+
+	if !changed {
+		log.Printf("CPA bootstrap: config already up to date")
+		return
+	}
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		log.Printf("Skipping CPA bootstrap, could not encode config: %v", err)
+		return
+	}
+	out = append(out, '\n')
+	if err := os.WriteFile(configPath, out, 0o600); err != nil {
+		log.Printf("Skipping CPA bootstrap, could not write %s: %v", configPath, err)
+		return
+	}
+	log.Printf("Applied CPA bootstrap config to %s", configPath)
+}
+
+func ensureObject(parent map[string]any, key string) (map[string]any, bool) {
+	if current, exists := parent[key]; exists {
+		asMap, ok := current.(map[string]any)
+		return asMap, ok
+	}
+	next := map[string]any{}
+	parent[key] = next
+	return next, true
+}
+
+func mergeCpaModels(raw any) ([]map[string]any, bool) {
+	extras := []map[string]any{}
+	existingNames := map[string]string{}
+	changed := raw == nil
+
+	if items, ok := raw.([]any); ok {
+		for _, item := range items {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				changed = true
+				continue
+			}
+			id, _ := entry["id"].(string)
+			id = strings.TrimSpace(id)
+			if id == "" {
+				changed = true
+				continue
+			}
+			name, _ := entry["name"].(string)
+			existingNames[id] = strings.TrimSpace(name)
+			if isRequiredCpaModel(id) {
+				continue
+			}
+			extras = append(extras, entry)
+		}
+	} else if raw != nil {
+		changed = true
+	}
+
+	next := make([]map[string]any, 0, len(requiredCpaModels)+len(extras))
+	for _, model := range requiredCpaModels {
+		next = append(next, map[string]any{
+			"id":   model.ID,
+			"name": model.Name,
+		})
+		if currentName, exists := existingNames[model.ID]; !exists || currentName != model.Name {
+			changed = true
+		}
+	}
+	next = append(next, extras...)
+	return next, changed
+}
+
+func isRequiredCpaModel(id string) bool {
+	for _, model := range requiredCpaModels {
+		if model.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureModelAliases(defaults map[string]any) bool {
+	modelsRaw, exists := defaults["models"]
+	var models map[string]any
+	switch typed := modelsRaw.(type) {
+	case map[string]any:
+		models = typed
+	case nil:
+		models = map[string]any{}
+		defaults["models"] = models
+	default:
+		models = map[string]any{}
+		defaults["models"] = models
+	}
+
+	changed := false
+	for key, alias := range requiredAliases {
+		currentRaw, exists := models[key]
+		if !exists {
+			models[key] = map[string]any{"alias": alias}
+			changed = true
+			continue
+		}
+		current, ok := currentRaw.(map[string]any)
+		if !ok {
+			models[key] = map[string]any{"alias": alias}
+			changed = true
+			continue
+		}
+		if existingAlias, _ := current["alias"].(string); strings.TrimSpace(existingAlias) == "" {
+			current["alias"] = alias
+			changed = true
+		}
+	}
+	return changed
+}
+
+func ensureCoderModel(agents map[string]any) bool {
+	listRaw, ok := agents["list"].([]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, item := range listRaw {
+		agent, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := agent["id"].(string)
+		if id != "coder" {
+			continue
+		}
+		if current, _ := agent["model"].(string); current != "cpa/gpt-5-codex" {
+			agent["model"] = "cpa/gpt-5-codex"
+			changed = true
+		}
+	}
+	return changed
 }
 
 func startGateway() {

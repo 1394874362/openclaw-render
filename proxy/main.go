@@ -47,6 +47,7 @@ html.oc-hide-tool-cards .chat-group.assistant:has(.chat-tool-card):not(:has(.cha
 const controlUIScript = `(() => {
   const settingsKey = "openclaw.control.settings.v1";
   const className = "oc-hide-tool-cards";
+  const webchatEchoSender = "openclaw-control-ui";
 
   function shouldHideToolCards() {
     try {
@@ -69,9 +70,98 @@ const controlUIScript = `(() => {
     el.style.removeProperty("display");
   }
 
+  function normalizeText(value) {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function extractGroupText(group) {
+    return normalizeText(
+      Array.from(group.querySelectorAll(".chat-text"))
+        .map((el) => el.textContent || "")
+        .join("\n"),
+    );
+  }
+
+  function extractGroupTimestamp(group) {
+    return normalizeText(group.querySelector(".chat-group-timestamp")?.textContent || "");
+  }
+
+  function normalizeWebchatEchoGroups() {
+    document.querySelectorAll(".chat-group").forEach((group) => {
+      const sender = group.querySelector(".chat-sender-name");
+      const senderText = normalizeText(sender?.textContent || "").toLowerCase();
+      if (senderText !== webchatEchoSender) {
+        return;
+      }
+
+      group.dataset.ocWebchatEcho = "1";
+      if (sender) {
+        sender.textContent = "You";
+      }
+
+      group.classList.remove("assistant", "other", "tool");
+      group.classList.add("user");
+
+      const avatar = group.querySelector(".chat-avatar");
+      if (avatar) {
+        avatar.classList.remove("assistant", "other", "tool");
+        avatar.classList.add("user");
+        if (!avatar.querySelector("img")) {
+          avatar.textContent = "U";
+        }
+      }
+    });
+  }
+
+  function dedupeWebchatEchoGroups() {
+    const groups = Array.from(document.querySelectorAll(".chat-group"));
+    for (let i = 0; i < groups.length - 1; i += 1) {
+      const current = groups[i];
+      const next = groups[i + 1];
+      if (!(current instanceof HTMLElement) || !(next instanceof HTMLElement)) {
+        continue;
+      }
+
+      const currentIsEcho = current.dataset.ocWebchatEcho === "1";
+      const nextIsEcho = next.dataset.ocWebchatEcho === "1";
+      if (!currentIsEcho && !nextIsEcho) {
+        continue;
+      }
+
+      if (!current.classList.contains("user") || !next.classList.contains("user")) {
+        continue;
+      }
+
+      const currentText = extractGroupText(current);
+      const nextText = extractGroupText(next);
+      if (!currentText || currentText !== nextText) {
+        continue;
+      }
+
+      const currentTs = extractGroupTimestamp(current);
+      const nextTs = extractGroupTimestamp(next);
+      if (currentTs && nextTs && currentTs !== nextTs) {
+        continue;
+      }
+
+      if (currentIsEcho && !nextIsEcho) {
+        setDisplay(current, true);
+        continue;
+      }
+      if (!currentIsEcho && nextIsEcho) {
+        setDisplay(next, true);
+        continue;
+      }
+    }
+  }
+
   function syncToolCardVisibility() {
     const hide = shouldHideToolCards();
     document.documentElement.classList.toggle(className, hide);
+    normalizeWebchatEchoGroups();
+    dedupeWebchatEchoGroups();
 
     document.querySelectorAll(".chat-tool-card").forEach((card) => {
       setDisplay(card, hide);

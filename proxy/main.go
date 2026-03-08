@@ -559,6 +559,7 @@ type cpaBootstrapSettings struct {
 	api           string
 	models        []cpaModelEntry
 	primaryModel  string
+	modelFallbacks []string
 	imageModel    string
 	coderModel    string
 }
@@ -672,7 +673,7 @@ func applyCpaConfigBootstrap(configPath string) {
 		log.Printf("Skipping CPA bootstrap, agents.defaults.model section is invalid")
 		return
 	}
-	desiredPrimaryRefs := cpaModelRefs(providerIDs, settings.primaryModel)
+	desiredPrimaryRefs := cpaModelRefChain(providerIDs, append([]string{settings.primaryModel}, settings.modelFallbacks...))
 	if ensureManagedAgentModel(modelCfg, desiredPrimaryRefs) {
 		changed = true
 	}
@@ -711,6 +712,7 @@ func applyCpaConfigBootstrap(configPath string) {
 func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 	rawModels := strings.TrimSpace(os.Getenv("CPA_MODELS"))
 	defaultModel := strings.TrimSpace(os.Getenv("CPA_DEFAULT_MODEL"))
+	modelFallbacks := parseDelimitedStrings(os.Getenv("CPA_MODEL_FALLBACKS"))
 	imageModel := strings.TrimSpace(os.Getenv("CPA_IMAGE_MODEL"))
 	coderModel := strings.TrimSpace(os.Getenv("CPA_CODER_MODEL"))
 	apiKeys := uniqueNonEmptyStrings(append(
@@ -724,6 +726,7 @@ func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 		api:          strings.TrimSpace(os.Getenv("CPA_API")),
 		models:       copyCpaModels(defaultCpaModels),
 		primaryModel: "gpt-5.4",
+		modelFallbacks: nil,
 		imageModel:   "gpt-5.4",
 		coderModel:   "gpt-5-codex",
 	}
@@ -738,6 +741,13 @@ func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 		settings.primaryModel = defaultModel
 	}
 	settings.models = appendCpaModel(settings.models, settings.primaryModel)
+	settings.modelFallbacks = sanitizeCpaFallbacks(modelFallbacks, settings.primaryModel)
+	if len(settings.modelFallbacks) == 0 {
+		settings.modelFallbacks = defaultCpaModelFallbacks(settings.models, settings.primaryModel)
+	}
+	for _, fallback := range settings.modelFallbacks {
+		settings.models = appendCpaModel(settings.models, fallback)
+	}
 	if imageModel != "" {
 		settings.imageModel = imageModel
 	} else {
@@ -1000,6 +1010,61 @@ func cpaModelRefs(providerIDs []string, modelID string) []string {
 		refs = append(refs, providerID+"/"+modelID)
 	}
 	return refs
+}
+
+func cpaModelRefChain(providerIDs []string, modelIDs []string) []string {
+	refs := make([]string, 0, len(providerIDs)*len(modelIDs))
+	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		refs = append(refs, cpaModelRefs(providerIDs, modelID)...)
+	}
+	return refs
+}
+
+func sanitizeCpaFallbacks(source []string, primary string) []string {
+	out := make([]string, 0, len(source))
+	seen := map[string]struct{}{}
+	primaryKey := strings.ToLower(strings.TrimSpace(primary))
+	if primaryKey != "" {
+		seen[primaryKey] = struct{}{}
+	}
+	for _, item := range source {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		key := strings.ToLower(item)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		out = append(out, item)
+		seen[key] = struct{}{}
+	}
+	return out
+}
+
+func defaultCpaModelFallbacks(models []cpaModelEntry, primary string) []string {
+	candidates := []string{"gemini-3-flash", "gpt-5", "gpt-5-codex"}
+	available := map[string]struct{}{}
+	for _, model := range models {
+		available[strings.ToLower(strings.TrimSpace(model.ID))] = struct{}{}
+	}
+	out := make([]string, 0, len(candidates))
+	primaryKey := strings.ToLower(strings.TrimSpace(primary))
+	for _, candidate := range candidates {
+		key := strings.ToLower(candidate)
+		if key == primaryKey {
+			continue
+		}
+		if _, exists := available[key]; !exists {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 func mergeCpaModels(raw any, desired []cpaModelEntry, keepExtras bool) ([]map[string]any, bool) {

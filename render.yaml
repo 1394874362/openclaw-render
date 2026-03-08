@@ -40,6 +40,8 @@ services:
         sync: false
       - key: CPA_DEFAULT_MODEL
         sync: false
+      - key: CPA_MODEL_FALLBACKS
+        sync: false
       - key: CPA_IMAGE_MODEL
         sync: false
       - key: CPA_CODER_MODEL

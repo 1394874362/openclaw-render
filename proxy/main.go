@@ -205,6 +205,7 @@ func applyRequiredConfig() {
 	// Ensure controlUi.allowInsecureAuth is set for remote browser access
 	configs := [][]string{
 		{"config", "set", "gateway.controlUi.allowInsecureAuth", "true"},
+		{"config", "set", "tools.profile", "full"},
 	}
 
 	// Allow WebSocket connections from Render's external hostname

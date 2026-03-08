@@ -64,7 +64,9 @@ const controlUIScript = `(() => {
   const className = "oc-hide-tool-cards";
   const webchatEchoSender = "openclaw-control-ui";
   const sessionResetPromptPrefix = "A new session was started via /new or /reset.";
-  const supportedLocales = ["en", "zh-CN", "zh-TW", "pt-BR", "de", "es"];
+  const forcedLocale = "zh-CN";
+  const supportedLocales = [forcedLocale];
+  const localeSelectValues = ["en", "zh-CN", "zh-TW", "pt-BR", "de", "es"];
   const localeReloadMarkerKey = "openclaw.render.locale.reload";
   const hardcodedLocalePatches = {
     "zh-CN": {
@@ -157,7 +159,34 @@ const controlUIScript = `(() => {
         "Raw mode": "Raw 模式",
         "Loading...": "加载中…",
         "Refreshing...": "刷新中…",
-        "Installing...": "安装中…"
+        "Installing...": "安装中…",
+        "Main Session": "主会话",
+        "New session": "新会话",
+        "Send": "发送",
+        "Queue": "排队",
+        "Stop": "停止",
+        "You": "你",
+        "View": "查看",
+        "Completed": "已完成",
+        "Read": "读取",
+        "Process": "处理",
+        "Exec": "执行",
+        "Copy": "复制",
+        "Exec approval needed": "需要执行批准",
+        "Approval required": "需要批准",
+        "Allow once": "本次允许",
+        "Always allow": "始终允许",
+        "Deny": "拒绝",
+        "Host": "主机",
+        "Agent": "代理",
+        "Session": "会话",
+        "CWD": "当前目录",
+        "Resolved": "解析后命令",
+        "Security": "安全级别",
+        "Ask": "询问策略",
+        "Language": "语言",
+        "English": "英语",
+        "Message (\u21a9 to send, Shift+\u21a9 for line breaks, paste images)": "发消息（回车发送，Shift+回车换行，可粘贴图片）"
       },
       patterns: [
         ["^Accounts \\((\\d+)\\)$", "账号 ($1)"],
@@ -174,6 +203,8 @@ const controlUIScript = `(() => {
         ["^Probe ok\\.(.*)$", "探测正常。$1"],
         ["^No settings match \"(.+)\"$", "没有匹配“$1”的设置"],
         ["^No settings in this section$", "这个分组里没有设置项"],
+        ["^Queued \\((\\d+)\\)$", "排队中（$1）"],
+        ["^expires in (.+)$", "$1 后过期"],
         ["^Loading.*$", "加载中…"],
         ["^Refreshing.*$", "刷新中…"],
         ["^Installing.*$", "安装中…"]
@@ -244,11 +275,11 @@ const controlUIScript = `(() => {
 
   function normalizeLocale(value) {
     const normalized = normalizeText(value);
-    return supportedLocales.includes(normalized) ? normalized : null;
+    return localeSelectValues.includes(normalized) ? normalized : null;
   }
 
   function currentLocale() {
-    return normalizeLocale(readControlSettings().locale) || normalizeLocale(window.localStorage.getItem(i18nLocaleKey)) || "en";
+    return forcedLocale;
   }
 
   function readControlSettings() {
@@ -271,10 +302,7 @@ const controlUIScript = `(() => {
   }
 
   function syncLocalePreference(locale) {
-    const normalized = normalizeLocale(locale);
-    if (!normalized) {
-      return false;
-    }
+    const normalized = forcedLocale;
     let changed = false;
     const settings = readControlSettings();
     if (settings.locale !== normalized) {
@@ -295,13 +323,7 @@ const controlUIScript = `(() => {
   }
 
   function syncLocaleFromStorage() {
-    const settingsLocale = normalizeLocale(readControlSettings().locale);
-    const i18nLocale = normalizeLocale(window.localStorage.getItem(i18nLocaleKey));
-    const preferred = settingsLocale || i18nLocale;
-    if (!preferred) {
-      return;
-    }
-    syncLocalePreference(preferred);
+    syncLocalePreference(forcedLocale);
   }
 
   function translateWithPatch(value, patch) {
@@ -320,6 +342,39 @@ const controlUIScript = `(() => {
       return text.replace(regex, replacement);
     }
     return null;
+  }
+
+  function shouldSkipTranslationNode(node) {
+    return Boolean(
+      node.closest(
+        "code, pre, kbd, samp, textarea, script, style, .chat-group, .chat-compose, .chat-session-select, .cm-editor, .monaco-editor, .ace_editor",
+      ),
+    );
+  }
+
+  function lockLanguageSelects() {
+    document.querySelectorAll("select").forEach((select) => {
+      if (!(select instanceof HTMLSelectElement) || !isLanguageSelect(select)) {
+        return;
+      }
+      Array.from(select.options).forEach((option) => {
+        if (option.value !== forcedLocale) {
+          option.remove();
+        }
+      });
+      let zhOption = Array.from(select.options).find((option) => option.value === forcedLocale) || null;
+      if (!zhOption) {
+        zhOption = document.createElement("option");
+        zhOption.value = forcedLocale;
+        zhOption.textContent = "简体中文（固定）";
+        select.appendChild(zhOption);
+      } else {
+        zhOption.textContent = "简体中文（固定）";
+      }
+      select.value = forcedLocale;
+      select.disabled = true;
+      select.title = "语言已固定为简体中文";
+    });
   }
 
   function translateHardcodedUiText() {
@@ -357,7 +412,7 @@ const controlUIScript = `(() => {
       if (!(node instanceof HTMLElement)) {
         return;
       }
-      if (node.closest(".chat-group, .chat-compose, .chat-session-select")) {
+      if (shouldSkipTranslationNode(node)) {
         return;
       }
       const translated = translateWithPatch(node.textContent || "", patch);
@@ -374,7 +429,7 @@ const controlUIScript = `(() => {
         if (node.childElementCount > 0) {
           return;
         }
-        if (node.closest(".chat-group, .chat-compose, nav")) {
+        if (node.closest("nav") || shouldSkipTranslationNode(node)) {
           return;
         }
         const translated = translateWithPatch(node.textContent || "", patch);
@@ -401,7 +456,7 @@ const controlUIScript = `(() => {
       return false;
     }
     const optionValues = Array.from(select.options).map((option) => option.value);
-    return supportedLocales.every((locale) => optionValues.includes(locale));
+    return localeSelectValues.every((locale) => optionValues.includes(locale));
   }
 
   function handleLocaleSelectChange(event) {
@@ -409,15 +464,43 @@ const controlUIScript = `(() => {
     if (!(target instanceof HTMLSelectElement) || !isLanguageSelect(target)) {
       return;
     }
-    const locale = normalizeLocale(target.value);
-    if (!locale) {
-      return;
-    }
-    syncLocalePreference(locale);
+    target.value = forcedLocale;
+    syncLocalePreference(forcedLocale);
     try {
-      window.sessionStorage.setItem(localeReloadMarkerKey, locale);
+      window.sessionStorage.setItem(localeReloadMarkerKey, forcedLocale);
     } catch {}
-    window.setTimeout(() => window.location.reload(), 60);
+  }
+
+  function looksLikeStopLabel(text) {
+    const normalized = normalizeText(text).toLowerCase();
+    return normalized.startsWith("stop") || normalized.startsWith("停止");
+  }
+
+  function looksLikeNewSessionLabel(text) {
+    const normalized = normalizeText(text).toLowerCase();
+    return normalized.startsWith("new session") || normalized.startsWith("新会话");
+  }
+
+  function localizeChatChrome() {
+    document.querySelectorAll(".chat-session-select .btn, .chat-session-select button").forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      const label = normalizeText(button.textContent || "");
+      if (label === "Main Session") {
+        setButtonLabel(button, "主会话");
+      }
+    });
+
+    document.querySelectorAll(".chat-compose__actions .btn").forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      const label = normalizeText(button.textContent || "");
+      if (looksLikeNewSessionLabel(label)) {
+        setButtonLabel(button, "新会话");
+      }
+    });
   }
 
   function extractGroupText(group) {
@@ -462,15 +545,20 @@ const controlUIScript = `(() => {
     const actionButtons = compose.querySelectorAll(".chat-compose__actions .btn");
     const secondaryButton = actionButtons[0];
     const primaryButton = compose.querySelector(".chat-compose__actions .btn.primary");
-    const runActive = normalizeText(secondaryButton?.textContent || "").toLowerCase().startsWith("stop");
+    const runActive = looksLikeStopLabel(secondaryButton?.textContent || "");
     const queue = document.querySelector(".chat-queue");
     const queuedItems = document.querySelectorAll(".chat-queue__item").length;
 
-    setButtonLabel(primaryButton, runActive ? "Queue" : "Send");
+    setButtonLabel(primaryButton, runActive ? "排队" : "发送");
+    if (runActive) {
+      setButtonLabel(secondaryButton, "停止");
+    } else if (looksLikeNewSessionLabel(secondaryButton?.textContent || "")) {
+      setButtonLabel(secondaryButton, "新会话");
+    }
 
     if (primaryButton instanceof HTMLElement) {
       primaryButton.title = runActive
-        ? "Current reply is still running. New messages will be queued automatically."
+        ? "当前回复仍在运行，新消息会自动进入队列。"
         : "";
       primaryButton.dataset.ocAction = runActive ? "queue" : "send";
     }
@@ -485,7 +573,7 @@ const controlUIScript = `(() => {
       }
       if (runActive || queuedItems > 0) {
         note.textContent =
-          "Current reply is still running. Queued messages will send automatically when it finishes.";
+          "当前回复仍在运行，排队中的消息会在完成后自动发送。";
         note.hidden = false;
       } else {
         note.hidden = true;
@@ -503,7 +591,7 @@ const controlUIScript = `(() => {
 
       group.dataset.ocWebchatEcho = "1";
       if (sender) {
-        sender.textContent = "You";
+        sender.textContent = "你";
       }
     });
   }
@@ -570,7 +658,7 @@ const controlUIScript = `(() => {
       return;
     }
     const label = normalizeText(button.textContent || "").toLowerCase();
-    if (!label.startsWith("new session")) {
+    if (!looksLikeNewSessionLabel(label)) {
       return;
     }
 
@@ -599,6 +687,8 @@ const controlUIScript = `(() => {
   function syncToolCardVisibility() {
     const hide = shouldHideToolCards();
     document.documentElement.classList.toggle(className, hide);
+    lockLanguageSelects();
+    localizeChatChrome();
     translateHardcodedUiText();
     normalizeWebchatEchoGroups();
     dedupeWebchatEchoGroups();

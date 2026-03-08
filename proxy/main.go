@@ -32,6 +32,7 @@ const (
 const controlUIScriptPath = "/__openclaw_render_ui.js"
 const defaultTelegramElevatedSender = "8519872697"
 const controlUiElevatedSender = "openclaw-control-ui"
+const defaultDisabledCronID = "job-chat-checkin-2130-cst"
 
 const controlUICustomizations = `<style id="openclaw-render-tool-card-override">
 .chat-group.tool {
@@ -62,6 +63,7 @@ const controlUIScript = `(() => {
   const className = "oc-hide-tool-cards";
   const webchatEchoSender = "openclaw-control-ui";
   const sessionResetPromptPrefix = "A new session was started via /new or /reset.";
+  let syncScheduled = false;
 
   function shouldHideToolCards() {
     try {
@@ -175,18 +177,6 @@ const controlUIScript = `(() => {
       if (sender) {
         sender.textContent = "You";
       }
-
-      group.classList.remove("assistant", "other", "tool");
-      group.classList.add("user");
-
-      const avatar = group.querySelector(".chat-avatar");
-      if (avatar) {
-        avatar.classList.remove("assistant", "other", "tool");
-        avatar.classList.add("user");
-        if (!avatar.querySelector("img")) {
-          avatar.textContent = "U";
-        }
-      }
     });
   }
 
@@ -202,10 +192,6 @@ const controlUIScript = `(() => {
       const currentIsEcho = current.dataset.ocWebchatEcho === "1";
       const nextIsEcho = next.dataset.ocWebchatEcho === "1";
       if (!currentIsEcho && !nextIsEcho) {
-        continue;
-      }
-
-      if (!current.classList.contains("user") || !next.classList.contains("user")) {
         continue;
       }
 
@@ -318,15 +304,24 @@ const controlUIScript = `(() => {
     });
   }
 
-  const observer = new MutationObserver(() => syncToolCardVisibility());
+  function requestSync() {
+    if (syncScheduled) {
+      return;
+    }
+    syncScheduled = true;
+    window.requestAnimationFrame(() => {
+      syncScheduled = false;
+      syncToolCardVisibility();
+    });
+  }
+
+  const observer = new MutationObserver(() => requestSync());
 
   function boot() {
-    syncToolCardVisibility();
+    requestSync();
     observer.observe(document.body, {
       childList: true,
       subtree: true,
-      attributes: true,
-      attributeFilter: ["class"],
     });
   }
 
@@ -336,11 +331,11 @@ const controlUIScript = `(() => {
     boot();
   }
 
-  window.addEventListener("storage", syncToolCardVisibility);
-  window.addEventListener("focus", syncToolCardVisibility);
-  document.addEventListener("click", () => window.setTimeout(syncToolCardVisibility, 0), true);
+  window.addEventListener("storage", requestSync);
+  window.addEventListener("focus", requestSync);
+  document.addEventListener("click", () => window.setTimeout(requestSync, 0), true);
   document.addEventListener("click", interceptNewSessionWithDraft, true);
-  window.addEventListener("pageshow", syncToolCardVisibility);
+  window.addEventListener("pageshow", requestSync);
 })();`
 
 var (
@@ -438,6 +433,7 @@ func ensureConfigured() {
 		applyRequiredConfig()
 		applyManagedAccessBootstrap(configPath)
 		applyCpaConfigBootstrap(configPath)
+		applyManagedCronBootstrap()
 		return
 	}
 
@@ -493,6 +489,7 @@ func ensureConfigured() {
 		applyRequiredConfig()
 		applyManagedAccessBootstrap(configPath)
 		applyCpaConfigBootstrap(configPath)
+		applyManagedCronBootstrap()
 		return
 	}
 
@@ -500,6 +497,7 @@ func ensureConfigured() {
 	applyRequiredConfig()
 	applyManagedAccessBootstrap(configPath)
 	applyCpaConfigBootstrap(configPath)
+	applyManagedCronBootstrap()
 }
 
 func createMinimalConfig(configPath string) {
@@ -681,6 +679,100 @@ func resolveManagedTelegramElevatedSenders() []string {
 		return []string{defaultTelegramElevatedSender}
 	}
 	return values
+}
+
+func resolveManagedDisabledCronIDs() []string {
+	raw := strings.TrimSpace(os.Getenv("OPENCLAW_DISABLE_CRON_IDS"))
+	if raw == "" {
+		return []string{defaultDisabledCronID}
+	}
+	switch strings.ToLower(raw) {
+	case "off", "none", "false", "-":
+		return nil
+	default:
+		return uniqueNonEmptyStrings(parseDelimitedStrings(raw))
+	}
+}
+
+func applyManagedCronBootstrap() {
+	disabledIDs := resolveManagedDisabledCronIDs()
+	if len(disabledIDs) == 0 {
+		return
+	}
+
+	storePath := stateDir + "/cron/jobs.json"
+	raw, err := os.ReadFile(storePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		log.Printf("Skipping cron bootstrap, could not read %s: %v", storePath, err)
+		return
+	}
+	if len(raw) >= 3 && raw[0] == 0xef && raw[1] == 0xbb && raw[2] == 0xbf {
+		raw = raw[3:]
+	}
+
+	var store map[string]any
+	if err := json.Unmarshal(raw, &store); err != nil {
+		log.Printf("Skipping cron bootstrap, invalid JSON in %s: %v", storePath, err)
+		return
+	}
+
+	jobsRaw, ok := store["jobs"].([]any)
+	if !ok || len(jobsRaw) == 0 {
+		return
+	}
+
+	disabledSet := map[string]struct{}{}
+	for _, id := range disabledIDs {
+		disabledSet[strings.TrimSpace(id)] = struct{}{}
+	}
+
+	changed := false
+	for _, item := range jobsRaw {
+		job, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := job["id"].(string)
+		if _, shouldDisable := disabledSet[strings.TrimSpace(id)]; !shouldDisable {
+			continue
+		}
+		if enabled, _ := job["enabled"].(bool); enabled {
+			job["enabled"] = false
+			changed = true
+		}
+		state, ok := ensureObject(job, "state")
+		if !ok {
+			continue
+		}
+		if _, exists := state["nextRunAtMs"]; exists {
+			delete(state, "nextRunAtMs")
+			changed = true
+		}
+		if _, exists := state["runningAtMs"]; exists {
+			delete(state, "runningAtMs")
+			changed = true
+		}
+		job["updatedAtMs"] = time.Now().UnixMilli()
+	}
+
+	if !changed {
+		return
+	}
+
+	out, err := json.MarshalIndent(store, "", "  ")
+	if err != nil {
+		log.Printf("Skipping cron bootstrap, could not encode store: %v", err)
+		return
+	}
+	out = append(out, '\n')
+	if err := os.WriteFile(storePath, out, 0o600); err != nil {
+		log.Printf("Skipping cron bootstrap, could not write %s: %v", storePath, err)
+		return
+	}
+	log.Printf("Disabled managed cron jobs in %s: %s", storePath, strings.Join(disabledIDs, ", "))
 }
 
 type cpaModelEntry struct {

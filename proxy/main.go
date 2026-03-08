@@ -565,6 +565,7 @@ type cpaBootstrapSettings struct {
 }
 
 var defaultCpaModels = []cpaModelEntry{
+	{ID: "gpt-5.2", Name: "GPT-5.2", Input: []string{"text", "image"}},
 	{ID: "gpt-5.4", Name: "ChatGPT 5.4", Input: []string{"text", "image"}},
 	{ID: "gpt-5", Name: "ChatGPT 5", Input: []string{"text", "image"}},
 	{ID: "gpt-5-codex", Name: "GPT-5 Codex", Input: []string{"text", "image"}},
@@ -572,6 +573,7 @@ var defaultCpaModels = []cpaModelEntry{
 }
 
 var defaultCpaAliases = map[string]string{
+	"cpa/gpt-5.2":        "chatgpt-5.2",
 	"cpa/gpt-5.4":        "chatgpt-5.4",
 	"cpa/gpt-5":          "chatgpt-5",
 	"cpa/gpt-5-codex":    "codex",
@@ -1047,7 +1049,7 @@ func sanitizeCpaFallbacks(source []string, primary string) []string {
 }
 
 func defaultCpaModelFallbacks(models []cpaModelEntry, primary string) []string {
-	candidates := []string{"gemini-3-flash", "gpt-5", "gpt-5-codex"}
+	candidates := []string{"gemini-3-flash", "gpt-5.2", "gpt-5", "gpt-5-codex"}
 	available := map[string]struct{}{}
 	for _, model := range models {
 		available[strings.ToLower(strings.TrimSpace(model.ID))] = struct{}{}

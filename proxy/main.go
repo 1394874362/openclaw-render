@@ -66,6 +66,74 @@ const controlUIScript = `(() => {
   const sessionResetPromptPrefix = "A new session was started via /new or /reset.";
   const supportedLocales = ["en", "zh-CN", "zh-TW", "pt-BR", "de", "es"];
   const localeReloadMarkerKey = "openclaw.render.locale.reload";
+  const hardcodedLocalePatches = {
+    "zh-CN": {
+      exact: {
+        "Bot status and channel configuration.": "\u673a\u5668\u4eba\u72b6\u6001\u548c\u9891\u9053\u914d\u7f6e\u3002",
+        "Channel status and configuration.": "\u9891\u9053\u72b6\u6001\u548c\u914d\u7f6e\u3002",
+        "Channel health": "\u9891\u9053\u5065\u5eb7",
+        "Channel status snapshots from the gateway.": "\u7f51\u5173\u8fd4\u56de\u7684\u9891\u9053\u72b6\u6001\u5feb\u7167\u3002",
+        "Configured": "\u5df2\u914d\u7f6e",
+        "Running": "\u8fd0\u884c\u4e2d",
+        "Connected": "\u5df2\u8fde\u63a5",
+        "Mode": "\u6a21\u5f0f",
+        "Last start": "\u4e0a\u6b21\u542f\u52a8",
+        "Last probe": "\u4e0a\u6b21\u63a2\u6d4b",
+        "Last inbound": "\u4e0a\u6b21\u5165\u7ad9",
+        "Probe ok.": "\u63a2\u6d4b\u6b63\u5e38\u3002",
+        "Probe": "\u63a2\u6d4b",
+        "Accounts": "\u8d26\u53f7",
+        "Ack Reaction": "\u786e\u8ba4\u53cd\u5e94",
+        "Allow From": "\u5141\u8bb8\u6765\u6e90",
+        "Actions": "\u64cd\u4f5c",
+        "Yes": "\u662f",
+        "No": "\u5426",
+        "Active": "\u6d3b\u8dc3",
+        "n/a": "\u4e0d\u9002\u7528",
+        "No snapshot yet.": "\u8fd8\u6ca1\u6709\u5feb\u7167\u3002"
+      },
+      patterns: [
+        ["^Accounts \\((\\d+)\\)$", "\u8d26\u53f7 ($1)"],
+        ["^Unsupported schema node\\. Use Raw mode\\.$", "\u5f53\u524d schema \u8282\u70b9\u4e0d\u53d7\u652f\u6301\uff0c\u8bf7\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
+        ["^Unsupported array schema\\. Use Raw mode\\.$", "\u5f53\u524d\u6570\u7ec4 schema \u4e0d\u53d7\u652f\u6301\uff0c\u8bf7\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
+        ["^Unsupported type: (.+)\\. Use Raw mode\\.$", "\u4e0d\u652f\u6301\u7684\u7c7b\u578b\uff1a$1\u3002\u8bf7\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
+        ["^Probe ok\\.(.*)$", "\u63a2\u6d4b\u6b63\u5e38\u3002$1"]
+      ]
+    },
+    "zh-TW": {
+      exact: {
+        "Bot status and channel configuration.": "\u6a5f\u5668\u4eba\u72c0\u614b\u8207\u983b\u9053\u8a2d\u5b9a\u3002",
+        "Channel status and configuration.": "\u983b\u9053\u72c0\u614b\u8207\u8a2d\u5b9a\u3002",
+        "Channel health": "\u983b\u9053\u5065\u5eb7",
+        "Channel status snapshots from the gateway.": "\u4f86\u81ea\u7db2\u95dc\u7684\u983b\u9053\u72c0\u614b\u5feb\u7167\u3002",
+        "Configured": "\u5df2\u8a2d\u5b9a",
+        "Running": "\u904b\u884c\u4e2d",
+        "Connected": "\u5df2\u9023\u7dda",
+        "Mode": "\u6a21\u5f0f",
+        "Last start": "\u4e0a\u6b21\u555f\u52d5",
+        "Last probe": "\u4e0a\u6b21\u63a2\u6e2c",
+        "Last inbound": "\u4e0a\u6b21\u5165\u7ad9",
+        "Probe ok.": "\u63a2\u6e2c\u6b63\u5e38\u3002",
+        "Probe": "\u63a2\u6e2c",
+        "Accounts": "\u5e33\u865f",
+        "Ack Reaction": "\u78ba\u8a8d\u56de\u61c9",
+        "Allow From": "\u5141\u8a31\u4f86\u6e90",
+        "Actions": "\u64cd\u4f5c",
+        "Yes": "\u662f",
+        "No": "\u5426",
+        "Active": "\u6d3b\u8e8d",
+        "n/a": "\u4e0d\u9069\u7528",
+        "No snapshot yet.": "\u9084\u6c92\u6709\u5feb\u7167\u3002"
+      },
+      patterns: [
+        ["^Accounts \\((\\d+)\\)$", "\u5e33\u865f ($1)"],
+        ["^Unsupported schema node\\. Use Raw mode\\.$", "\u76ee\u524d schema \u7bc0\u9ede\u4e0d\u53d7\u652f\u63f4\uff0c\u8acb\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
+        ["^Unsupported array schema\\. Use Raw mode\\.$", "\u76ee\u524d\u9663\u5217 schema \u4e0d\u53d7\u652f\u63f4\uff0c\u8acb\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
+        ["^Unsupported type: (.+)\\. Use Raw mode\\.$", "\u4e0d\u652f\u63f4\u7684\u985e\u578b\uff1a$1\u3002\u8acb\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
+        ["^Probe ok\\.(.*)$", "\u63a2\u6e2c\u6b63\u5e38\u3002$1"]
+      ]
+    }
+  };
   let syncScheduled = false;
 
   function shouldHideToolCards() {
@@ -98,6 +166,10 @@ const controlUIScript = `(() => {
   function normalizeLocale(value) {
     const normalized = normalizeText(value);
     return supportedLocales.includes(normalized) ? normalized : null;
+  }
+
+  function currentLocale() {
+    return normalizeLocale(readControlSettings().locale) || normalizeLocale(window.localStorage.getItem(i18nLocaleKey)) || "en";
   }
 
   function readControlSettings() {
@@ -151,6 +223,48 @@ const controlUIScript = `(() => {
       return;
     }
     syncLocalePreference(preferred);
+  }
+
+  function translateHardcodedUiText() {
+    const locale = currentLocale();
+    const patch = hardcodedLocalePatches[locale];
+    if (!patch) {
+      return;
+    }
+    const selectors = [
+      ".card-sub",
+      ".label",
+      ".callout",
+      ".cfg-field__error",
+      ".account-count",
+      ".btn",
+      ".status-list span",
+      ".status-list div",
+      ".cfg-row__title",
+      ".cfg-group__title"
+    ];
+    document.querySelectorAll(selectors.join(",")).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      const text = normalizeText(node.textContent || "");
+      if (!text) {
+        return;
+      }
+      const exact = patch.exact[text];
+      if (exact) {
+        node.textContent = exact;
+        return;
+      }
+      for (const [pattern, replacement] of patch.patterns) {
+        const regex = new RegExp(pattern);
+        if (!regex.test(text)) {
+          continue;
+        }
+        node.textContent = text.replace(regex, replacement);
+        return;
+      }
+    });
   }
 
   function isLanguageSelect(select) {
@@ -356,6 +470,7 @@ const controlUIScript = `(() => {
   function syncToolCardVisibility() {
     const hide = shouldHideToolCards();
     document.documentElement.classList.toggle(className, hide);
+    translateHardcodedUiText();
     normalizeWebchatEchoGroups();
     dedupeWebchatEchoGroups();
     hideInternalResetPromptGroups();

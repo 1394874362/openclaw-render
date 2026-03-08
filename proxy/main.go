@@ -174,6 +174,8 @@ func ensureConfigured() {
 	if err := cmd.Run(); err != nil {
 		log.Printf("Warning: onboard failed (%v), creating minimal config as fallback", err)
 		createMinimalConfig(configPath)
+		applyRequiredConfig()
+		applyCpaConfigBootstrap(configPath)
 		return
 	}
 
@@ -230,14 +232,25 @@ type cpaModelEntry struct {
 	Name string `json:"name"`
 }
 
-var requiredCpaModels = []cpaModelEntry{
+type cpaBootstrapSettings struct {
+	envConfigured bool
+	createProvider bool
+	baseURL       string
+	apiKey        string
+	api           string
+	models        []cpaModelEntry
+	primaryModel  string
+	coderModel    string
+}
+
+var defaultCpaModels = []cpaModelEntry{
 	{ID: "gpt-5.4", Name: "ChatGPT 5.4"},
 	{ID: "gpt-5", Name: "ChatGPT 5"},
 	{ID: "gpt-5-codex", Name: "GPT-5 Codex"},
 	{ID: "gemini-3-flash", Name: "Gemini 3 Flash"},
 }
 
-var requiredAliases = map[string]string{
+var defaultCpaAliases = map[string]string{
 	"cpa/gpt-5.4":        "chatgpt-5.4",
 	"cpa/gpt-5":          "chatgpt-5",
 	"cpa/gpt-5-codex":    "codex",
@@ -245,6 +258,8 @@ var requiredAliases = map[string]string{
 }
 
 func applyCpaConfigBootstrap(configPath string) {
+	settings := resolveCpaBootstrapSettings()
+
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Printf("Skipping CPA bootstrap, could not read %s: %v", configPath, err)
@@ -270,19 +285,35 @@ func applyCpaConfigBootstrap(configPath string) {
 		log.Printf("Skipping CPA bootstrap, providers section is invalid")
 		return
 	}
-	cpaRaw, exists := providers["cpa"]
-	if !exists {
+
+	changed := false
+	var cpa map[string]any
+	if cpaRaw, exists := providers["cpa"]; exists {
+		cpa, ok = cpaRaw.(map[string]any)
+		if !ok {
+			log.Printf("Skipping CPA bootstrap, models.providers.cpa is invalid")
+			return
+		}
+	} else if settings.createProvider {
+		cpa = map[string]any{}
+		providers["cpa"] = cpa
+		changed = true
+	} else {
 		log.Printf("Skipping CPA bootstrap, models.providers.cpa is not configured")
 		return
 	}
-	cpa, ok := cpaRaw.(map[string]any)
-	if !ok {
-		log.Printf("Skipping CPA bootstrap, models.providers.cpa is invalid")
-		return
+
+	if settings.envConfigured {
+		if currentMode, _ := models["mode"].(string); strings.TrimSpace(currentMode) == "" {
+			models["mode"] = "replace"
+			changed = true
+		}
+		if applyCpaProviderSettings(cpa, settings) {
+			changed = true
+		}
 	}
 
-	changed := false
-	if nextModels, modelChanged := mergeCpaModels(cpa["models"]); modelChanged {
+	if nextModels, modelChanged := mergeCpaModels(cpa["models"], settings.models, !settings.envConfigured); modelChanged {
 		cpa["models"] = nextModels
 		changed = true
 	}
@@ -302,17 +333,18 @@ func applyCpaConfigBootstrap(configPath string) {
 		log.Printf("Skipping CPA bootstrap, agents.defaults.model section is invalid")
 		return
 	}
-	if primary, _ := modelCfg["primary"].(string); strings.TrimSpace(primary) == "" || strings.HasPrefix(primary, "cpa/") {
-		if primary != "cpa/gpt-5.4" {
-			modelCfg["primary"] = "cpa/gpt-5.4"
+	desiredPrimary := "cpa/" + settings.primaryModel
+	if primary, _ := modelCfg["primary"].(string); settings.envConfigured || strings.TrimSpace(primary) == "" || strings.HasPrefix(primary, "cpa/") {
+		if primary != desiredPrimary {
+			modelCfg["primary"] = desiredPrimary
 			changed = true
 		}
 	}
 
-	if ensureModelAliases(defaults) {
+	if ensureModelAliases(defaults, buildCpaAliases(settings.models)) {
 		changed = true
 	}
-	if ensureCoderModel(agents) {
+	if ensureCoderModel(agents, "cpa/"+settings.coderModel) {
 		changed = true
 	}
 
@@ -334,6 +366,47 @@ func applyCpaConfigBootstrap(configPath string) {
 	log.Printf("Applied CPA bootstrap config to %s", configPath)
 }
 
+func resolveCpaBootstrapSettings() cpaBootstrapSettings {
+	rawModels := strings.TrimSpace(os.Getenv("CPA_MODELS"))
+	defaultModel := strings.TrimSpace(os.Getenv("CPA_DEFAULT_MODEL"))
+	coderModel := strings.TrimSpace(os.Getenv("CPA_CODER_MODEL"))
+
+	settings := cpaBootstrapSettings{
+		baseURL:      strings.TrimSpace(os.Getenv("CPA_BASE_URL")),
+		apiKey:       strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		api:          strings.TrimSpace(os.Getenv("CPA_API")),
+		models:       copyCpaModels(defaultCpaModels),
+		primaryModel: "gpt-5.4",
+		coderModel:   "gpt-5-codex",
+	}
+
+	if parsedModels, ok := parseCpaModels(rawModels); ok {
+		settings.models = parsedModels
+	}
+	if defaultModel != "" {
+		settings.primaryModel = defaultModel
+	}
+	settings.models = appendCpaModel(settings.models, settings.primaryModel)
+
+	switch {
+	case coderModel != "":
+		settings.coderModel = coderModel
+	case hasCpaModel(settings.models, "gpt-5-codex"):
+		settings.coderModel = "gpt-5-codex"
+	default:
+		settings.coderModel = settings.primaryModel
+	}
+	settings.models = appendCpaModel(settings.models, settings.coderModel)
+
+	if settings.api == "" && (settings.baseURL != "" || settings.apiKey != "" || rawModels != "") {
+		settings.api = "openai-responses"
+	}
+	settings.createProvider = settings.baseURL != "" || settings.apiKey != "" || rawModels != ""
+	settings.envConfigured = settings.createProvider || settings.api != "" || defaultModel != "" || coderModel != ""
+
+	return settings
+}
+
 func ensureObject(parent map[string]any, key string) (map[string]any, bool) {
 	if current, exists := parent[key]; exists {
 		asMap, ok := current.(map[string]any)
@@ -344,9 +417,136 @@ func ensureObject(parent map[string]any, key string) (map[string]any, bool) {
 	return next, true
 }
 
-func mergeCpaModels(raw any) ([]map[string]any, bool) {
+func copyCpaModels(source []cpaModelEntry) []cpaModelEntry {
+	cloned := make([]cpaModelEntry, len(source))
+	copy(cloned, source)
+	return cloned
+}
+
+func parseCpaModels(raw string) ([]cpaModelEntry, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, false
+	}
+
+	if strings.HasPrefix(raw, "[") {
+		var parsed []cpaModelEntry
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			log.Printf("Ignoring CPA_MODELS, invalid JSON: %v", err)
+			return nil, false
+		}
+		parsed = sanitizeCpaModels(parsed)
+		if len(parsed) == 0 {
+			log.Printf("Ignoring CPA_MODELS, no valid model IDs found")
+			return nil, false
+		}
+		return parsed, true
+	}
+
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == ';'
+	})
+	parsed := make([]cpaModelEntry, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+
+		id := field
+		name := ""
+		switch {
+		case strings.Contains(field, "="):
+			parts := strings.SplitN(field, "=", 2)
+			id = strings.TrimSpace(parts[0])
+			name = strings.TrimSpace(parts[1])
+		case strings.Contains(field, "|"):
+			parts := strings.SplitN(field, "|", 2)
+			id = strings.TrimSpace(parts[0])
+			name = strings.TrimSpace(parts[1])
+		}
+		if id == "" {
+			continue
+		}
+		if name == "" {
+			name = cpaDisplayName(id)
+		}
+		parsed = append(parsed, cpaModelEntry{ID: id, Name: name})
+	}
+
+	parsed = sanitizeCpaModels(parsed)
+	if len(parsed) == 0 {
+		log.Printf("Ignoring CPA_MODELS, no valid model IDs found")
+		return nil, false
+	}
+	return parsed, true
+}
+
+func sanitizeCpaModels(source []cpaModelEntry) []cpaModelEntry {
+	sanitized := make([]cpaModelEntry, 0, len(source))
+	seen := map[string]struct{}{}
+	for _, model := range source {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		name := strings.TrimSpace(model.Name)
+		if name == "" {
+			name = cpaDisplayName(id)
+		}
+		sanitized = append(sanitized, cpaModelEntry{ID: id, Name: name})
+		seen[id] = struct{}{}
+	}
+	return sanitized
+}
+
+func cpaDisplayName(id string) string {
+	for _, model := range defaultCpaModels {
+		if model.ID == id {
+			return model.Name
+		}
+	}
+	return id
+}
+
+func appendCpaModel(models []cpaModelEntry, id string) []cpaModelEntry {
+	id = strings.TrimSpace(id)
+	if id == "" || hasCpaModel(models, id) {
+		return models
+	}
+	return append(models, cpaModelEntry{ID: id, Name: cpaDisplayName(id)})
+}
+
+func applyCpaProviderSettings(cpa map[string]any, settings cpaBootstrapSettings) bool {
+	changed := false
+	if settings.baseURL != "" {
+		if current, _ := cpa["baseUrl"].(string); current != settings.baseURL {
+			cpa["baseUrl"] = settings.baseURL
+			changed = true
+		}
+	}
+	if settings.apiKey != "" {
+		if current, _ := cpa["apiKey"].(string); current != settings.apiKey {
+			cpa["apiKey"] = settings.apiKey
+			changed = true
+		}
+	}
+	if settings.api != "" {
+		if current, _ := cpa["api"].(string); current != settings.api {
+			cpa["api"] = settings.api
+			changed = true
+		}
+	}
+	return changed
+}
+
+func mergeCpaModels(raw any, desired []cpaModelEntry, keepExtras bool) ([]map[string]any, bool) {
 	extras := []map[string]any{}
 	existingNames := map[string]string{}
+	existingIDs := map[string]struct{}{}
 	changed := raw == nil
 
 	if items, ok := raw.([]any); ok {
@@ -363,23 +563,32 @@ func mergeCpaModels(raw any) ([]map[string]any, bool) {
 				continue
 			}
 			name, _ := entry["name"].(string)
+			existingIDs[id] = struct{}{}
 			existingNames[id] = strings.TrimSpace(name)
-			if isRequiredCpaModel(id) {
+			if hasCpaModel(desired, id) {
 				continue
 			}
-			extras = append(extras, entry)
+			if keepExtras {
+				extras = append(extras, entry)
+			} else {
+				changed = true
+			}
 		}
 	} else if raw != nil {
 		changed = true
 	}
 
-	next := make([]map[string]any, 0, len(requiredCpaModels)+len(extras))
-	for _, model := range requiredCpaModels {
+	next := make([]map[string]any, 0, len(desired)+len(extras))
+	for _, model := range desired {
 		next = append(next, map[string]any{
 			"id":   model.ID,
 			"name": model.Name,
 		})
-		if currentName, exists := existingNames[model.ID]; !exists || currentName != model.Name {
+		if _, exists := existingIDs[model.ID]; !exists {
+			changed = true
+			continue
+		}
+		if currentName := existingNames[model.ID]; currentName != model.Name {
 			changed = true
 		}
 	}
@@ -387,8 +596,8 @@ func mergeCpaModels(raw any) ([]map[string]any, bool) {
 	return next, changed
 }
 
-func isRequiredCpaModel(id string) bool {
-	for _, model := range requiredCpaModels {
+func hasCpaModel(models []cpaModelEntry, id string) bool {
+	for _, model := range models {
 		if model.ID == id {
 			return true
 		}
@@ -396,7 +605,31 @@ func isRequiredCpaModel(id string) bool {
 	return false
 }
 
-func ensureModelAliases(defaults map[string]any) bool {
+func buildCpaAliases(models []cpaModelEntry) map[string]string {
+	aliases := make(map[string]string, len(models))
+	for _, model := range models {
+		fullID := "cpa/" + model.ID
+		if alias, exists := defaultCpaAliases[fullID]; exists {
+			aliases[fullID] = alias
+			continue
+		}
+		aliases[fullID] = normalizeCpaAlias(model.ID)
+	}
+	return aliases
+}
+
+func normalizeCpaAlias(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer("/", "-", "\\", "-", "_", "-", " ", "-", "|", "-", "=", "-", ":", "-", ".", "-")
+	value = replacer.Replace(value)
+	value = strings.Trim(value, "-")
+	if value == "" {
+		return "cpa-model"
+	}
+	return value
+}
+
+func ensureModelAliases(defaults map[string]any, aliases map[string]string) bool {
 	modelsRaw := defaults["models"]
 	var models map[string]any
 	switch typed := modelsRaw.(type) {
@@ -411,7 +644,7 @@ func ensureModelAliases(defaults map[string]any) bool {
 	}
 
 	changed := false
-	for key, alias := range requiredAliases {
+	for key, alias := range aliases {
 		currentRaw, exists := models[key]
 		if !exists {
 			models[key] = map[string]any{"alias": alias}
@@ -432,7 +665,7 @@ func ensureModelAliases(defaults map[string]any) bool {
 	return changed
 }
 
-func ensureCoderModel(agents map[string]any) bool {
+func ensureCoderModel(agents map[string]any, desiredModel string) bool {
 	listRaw, ok := agents["list"].([]any)
 	if !ok {
 		return false
@@ -447,8 +680,8 @@ func ensureCoderModel(agents map[string]any) bool {
 		if id != "coder" {
 			continue
 		}
-		if current, _ := agent["model"].(string); current != "cpa/gpt-5-codex" {
-			agent["model"] = "cpa/gpt-5-codex"
+		if current, _ := agent["model"].(string); current != desiredModel {
+			agent["model"] = desiredModel
 			changed = true
 		}
 	}

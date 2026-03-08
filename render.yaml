@@ -27,6 +27,19 @@ services:
         sync: false
       - key: MINIMAX_API_KEY
         sync: false
+      # Custom CPA provider bootstrap (optional)
+      - key: CPA_BASE_URL
+        sync: false
+      - key: CPA_API_KEY
+        sync: false
+      - key: CPA_API
+        sync: false
+      - key: CPA_MODELS
+        sync: false
+      - key: CPA_DEFAULT_MODEL
+        sync: false
+      - key: CPA_CODER_MODEL
+        sync: false
     disk:
       name: openclaw-data
       mountPath: /data

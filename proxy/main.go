@@ -555,6 +555,7 @@ type cpaBootstrapSettings struct {
 	createProvider bool
 	baseURL       string
 	apiKey        string
+	apiKeys       []string
 	api           string
 	models        []cpaModelEntry
 	primaryModel  string
@@ -627,14 +628,33 @@ func applyCpaConfigBootstrap(configPath string) {
 			models["mode"] = "replace"
 			changed = true
 		}
-		if applyCpaProviderSettings(cpa, settings) {
+	}
+	providerIDs := cpaProviderIDs(settings)
+	for idx, providerID := range providerIDs {
+		providerCfg := cpa
+		if providerID != "cpa" {
+			providerRaw, exists := providers[providerID]
+			if exists {
+				providerCfg, ok = providerRaw.(map[string]any)
+				if !ok {
+					log.Printf("Skipping CPA bootstrap, models.providers.%s is invalid", providerID)
+					return
+				}
+			} else {
+				providerCfg = map[string]any{}
+				providers[providerID] = providerCfg
+				changed = true
+			}
+		}
+		if settings.envConfigured {
+			if applyCpaProviderSettings(providerCfg, settings, cpaProviderAPIKey(settings, idx)) {
+				changed = true
+			}
+		}
+		if nextModels, modelChanged := mergeCpaModels(providerCfg["models"], settings.models, !settings.envConfigured); modelChanged {
+			providerCfg["models"] = nextModels
 			changed = true
 		}
-	}
-
-	if nextModels, modelChanged := mergeCpaModels(cpa["models"], settings.models, !settings.envConfigured); modelChanged {
-		cpa["models"] = nextModels
-		changed = true
 	}
 
 	agents, ok := ensureObject(cfg, "agents")
@@ -652,14 +672,11 @@ func applyCpaConfigBootstrap(configPath string) {
 		log.Printf("Skipping CPA bootstrap, agents.defaults.model section is invalid")
 		return
 	}
-	desiredPrimary := "cpa/" + settings.primaryModel
-	if primary, _ := modelCfg["primary"].(string); settings.envConfigured || strings.TrimSpace(primary) == "" || strings.HasPrefix(primary, "cpa/") {
-		if primary != desiredPrimary {
-			modelCfg["primary"] = desiredPrimary
-			changed = true
-		}
+	desiredPrimaryRefs := cpaModelRefs(providerIDs, settings.primaryModel)
+	if ensureManagedAgentModel(modelCfg, desiredPrimaryRefs) {
+		changed = true
 	}
-	if ensureImageModel(defaults, "cpa/"+settings.imageModel) {
+	if ensureImageModel(defaults, cpaModelRefs(providerIDs, settings.imageModel)) {
 		changed = true
 	}
 	if ensureImageUnderstanding(cfg, settings.imageModel) {
@@ -669,7 +686,7 @@ func applyCpaConfigBootstrap(configPath string) {
 	if ensureModelAliases(defaults, buildCpaAliases(settings.models)) {
 		changed = true
 	}
-	if ensureCoderModel(agents, "cpa/"+settings.coderModel) {
+	if ensureCoderModel(agents, cpaModelRefs(providerIDs, settings.coderModel)) {
 		changed = true
 	}
 
@@ -696,15 +713,22 @@ func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 	defaultModel := strings.TrimSpace(os.Getenv("CPA_DEFAULT_MODEL"))
 	imageModel := strings.TrimSpace(os.Getenv("CPA_IMAGE_MODEL"))
 	coderModel := strings.TrimSpace(os.Getenv("CPA_CODER_MODEL"))
+	apiKeys := uniqueNonEmptyStrings(append(
+		[]string{strings.TrimSpace(os.Getenv("CPA_API_KEY"))},
+		parseDelimitedStrings(os.Getenv("CPA_API_KEYS"))...,
+	))
 
 	settings := cpaBootstrapSettings{
 		baseURL:      strings.TrimSpace(os.Getenv("CPA_BASE_URL")),
-		apiKey:       strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		apiKeys:      apiKeys,
 		api:          strings.TrimSpace(os.Getenv("CPA_API")),
 		models:       copyCpaModels(defaultCpaModels),
 		primaryModel: "gpt-5.4",
 		imageModel:   "gpt-5.4",
 		coderModel:   "gpt-5-codex",
+	}
+	if len(settings.apiKeys) > 0 {
+		settings.apiKey = settings.apiKeys[0]
 	}
 
 	if parsedModels, ok := parseCpaModels(rawModels); ok {
@@ -734,7 +758,7 @@ func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 	if settings.api == "" && (settings.baseURL != "" || settings.apiKey != "" || rawModels != "") {
 		settings.api = "openai-responses"
 	}
-	settings.createProvider = settings.baseURL != "" || settings.apiKey != "" || rawModels != ""
+	settings.createProvider = settings.baseURL != "" || len(settings.apiKeys) > 0 || rawModels != ""
 	settings.envConfigured = settings.createProvider || settings.api != "" || defaultModel != "" || imageModel != "" || coderModel != ""
 
 	return settings
@@ -920,7 +944,7 @@ func cpaLikelySupportsVision(id string) bool {
 	}
 }
 
-func applyCpaProviderSettings(cpa map[string]any, settings cpaBootstrapSettings) bool {
+func applyCpaProviderSettings(cpa map[string]any, settings cpaBootstrapSettings, apiKey string) bool {
 	changed := false
 	if settings.baseURL != "" {
 		if current, _ := cpa["baseUrl"].(string); current != settings.baseURL {
@@ -928,9 +952,9 @@ func applyCpaProviderSettings(cpa map[string]any, settings cpaBootstrapSettings)
 			changed = true
 		}
 	}
-	if settings.apiKey != "" {
-		if current, _ := cpa["apiKey"].(string); current != settings.apiKey {
-			cpa["apiKey"] = settings.apiKey
+	if apiKey != "" {
+		if current, _ := cpa["apiKey"].(string); current != apiKey {
+			cpa["apiKey"] = apiKey
 			changed = true
 		}
 	}
@@ -941,6 +965,41 @@ func applyCpaProviderSettings(cpa map[string]any, settings cpaBootstrapSettings)
 		}
 	}
 	return changed
+}
+
+func cpaProviderIDs(settings cpaBootstrapSettings) []string {
+	count := len(settings.apiKeys)
+	if count <= 1 {
+		return []string{"cpa"}
+	}
+	ids := make([]string, 0, count)
+	for idx := 0; idx < count; idx++ {
+		if idx == 0 {
+			ids = append(ids, "cpa")
+			continue
+		}
+		ids = append(ids, fmt.Sprintf("cpa%d", idx+1))
+	}
+	return ids
+}
+
+func cpaProviderAPIKey(settings cpaBootstrapSettings, idx int) string {
+	if idx >= 0 && idx < len(settings.apiKeys) {
+		return settings.apiKeys[idx]
+	}
+	return settings.apiKey
+}
+
+func cpaModelRefs(providerIDs []string, modelID string) []string {
+	refs := make([]string, 0, len(providerIDs))
+	for _, providerID := range providerIDs {
+		providerID = strings.TrimSpace(providerID)
+		if providerID == "" {
+			continue
+		}
+		refs = append(refs, providerID+"/"+modelID)
+	}
+	return refs
 }
 
 func mergeCpaModels(raw any, desired []cpaModelEntry, keepExtras bool) ([]map[string]any, bool) {
@@ -1069,7 +1128,38 @@ func ensureModelAliases(defaults map[string]any, aliases map[string]string) bool
 	return changed
 }
 
-func ensureImageModel(defaults map[string]any, desiredModel string) bool {
+func ensureManagedAgentModel(target map[string]any, desiredRefs []string) bool {
+	if len(desiredRefs) == 0 {
+		return false
+	}
+
+	currentPrimary, currentFallbacks, ok := coerceManagedAgentModel(target)
+	if !ok {
+		return false
+	}
+	if currentPrimary != "" && !strings.HasPrefix(currentPrimary, "cpa") {
+		return false
+	}
+	for _, fallback := range currentFallbacks {
+		if fallback != "" && !strings.HasPrefix(fallback, "cpa") {
+			return false
+		}
+	}
+
+	changed := false
+	if currentPrimary != desiredRefs[0] {
+		target["primary"] = desiredRefs[0]
+		changed = true
+	}
+	desiredFallbacks := desiredRefs[1:]
+	if !stringSlicesEqual(currentFallbacks, desiredFallbacks) {
+		target["fallbacks"] = toAnyStrings(desiredFallbacks)
+		changed = true
+	}
+	return changed
+}
+
+func ensureImageModel(defaults map[string]any, desiredRefs []string) bool {
 	currentRaw, exists := defaults["imageModel"]
 	if exists {
 		if current, ok := currentRaw.(string); ok {
@@ -1077,8 +1167,7 @@ func ensureImageModel(defaults map[string]any, desiredModel string) bool {
 			if current != "" && !strings.HasPrefix(current, "cpa/") {
 				return false
 			}
-			currentRaw = map[string]any{"primary": current}
-			defaults["imageModel"] = currentRaw
+			defaults["imageModel"] = map[string]any{"primary": current}
 		}
 	}
 
@@ -1086,16 +1175,7 @@ func ensureImageModel(defaults map[string]any, desiredModel string) bool {
 	if !ok {
 		return false
 	}
-	current, _ := imageModel["primary"].(string)
-	current = strings.TrimSpace(current)
-	if current != "" && !strings.HasPrefix(current, "cpa/") {
-		return false
-	}
-	if current == desiredModel {
-		return false
-	}
-	imageModel["primary"] = desiredModel
-	return true
+	return ensureManagedAgentModel(imageModel, desiredRefs)
 }
 
 func ensureImageUnderstanding(cfg map[string]any, desiredModel string) bool {
@@ -1183,7 +1263,82 @@ func stringSlicesEqual(a []string, b []string) bool {
 	return true
 }
 
-func ensureCoderModel(agents map[string]any, desiredModel string) bool {
+func coerceManagedAgentModel(target map[string]any) (string, []string, bool) {
+	currentRaw, exists := target["primary"]
+	if !exists {
+		return "", nil, true
+	}
+	current, ok := currentRaw.(string)
+	if !ok {
+		return "", nil, false
+	}
+	return strings.TrimSpace(current), readStringSlice(target["fallbacks"]), true
+}
+
+func readStringSlice(raw any) []string {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		value, ok := item.(string)
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		values = append(values, value)
+	}
+	return values
+}
+
+func toAnyStrings(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
+	}
+	return out
+}
+
+func parseDelimitedStrings(raw string) []string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == ';'
+	})
+	values := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		values = append(values, field)
+	}
+	return values
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		out = append(out, value)
+		seen[value] = struct{}{}
+	}
+	return out
+}
+
+func ensureCoderModel(agents map[string]any, desiredRefs []string) bool {
+	if len(desiredRefs) == 0 {
+		return false
+	}
 	listRaw, ok := agents["list"].([]any)
 	if !ok {
 		return false
@@ -1198,8 +1353,37 @@ func ensureCoderModel(agents map[string]any, desiredModel string) bool {
 		if id != "coder" {
 			continue
 		}
-		if current, _ := agent["model"].(string); current != desiredModel {
-			agent["model"] = desiredModel
+		switch current := agent["model"].(type) {
+		case string:
+			current = strings.TrimSpace(current)
+			if current != "" && !strings.HasPrefix(current, "cpa/") {
+				continue
+			}
+			if len(desiredRefs) == 1 {
+				if current != desiredRefs[0] {
+					agent["model"] = desiredRefs[0]
+					changed = true
+				}
+			} else {
+				agent["model"] = map[string]any{
+					"primary":   desiredRefs[0],
+					"fallbacks": toAnyStrings(desiredRefs[1:]),
+				}
+				changed = true
+			}
+		case map[string]any:
+			if ensureManagedAgentModel(current, desiredRefs) {
+				changed = true
+			}
+		case nil:
+			if len(desiredRefs) == 1 {
+				agent["model"] = desiredRefs[0]
+			} else {
+				agent["model"] = map[string]any{
+					"primary":   desiredRefs[0],
+					"fallbacks": toAnyStrings(desiredRefs[1:]),
+				}
+			}
 			changed = true
 		}
 	}

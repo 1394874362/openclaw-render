@@ -32,6 +32,8 @@ services:
         sync: false
       - key: CPA_API_KEY
         sync: false
+      - key: CPA_API_KEYS
+        sync: false
       - key: CPA_API
         sync: false
       - key: CPA_MODELS

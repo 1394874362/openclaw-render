@@ -46,6 +46,8 @@ services:
         sync: false
       - key: CPA_CODER_MODEL
         sync: false
+      - key: OPENCLAW_ELEVATED_TELEGRAM_ALLOW_FROM
+        sync: false
     disk:
       name: openclaw-data
       mountPath: /data

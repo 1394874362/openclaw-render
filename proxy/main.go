@@ -30,6 +30,8 @@ const (
 )
 
 const controlUIScriptPath = "/__openclaw_render_ui.js"
+const defaultTelegramElevatedSender = "8519872697"
+const controlUiElevatedSender = "openclaw-control-ui"
 
 const controlUICustomizations = `<style id="openclaw-render-tool-card-override">
 .chat-group.tool {
@@ -434,6 +436,7 @@ func ensureConfigured() {
 	if _, err := os.Stat(configPath); err == nil {
 		log.Printf("Config exists at %s, skipping onboard", configPath)
 		applyRequiredConfig()
+		applyManagedAccessBootstrap(configPath)
 		applyCpaConfigBootstrap(configPath)
 		return
 	}
@@ -488,12 +491,14 @@ func ensureConfigured() {
 		log.Printf("Warning: onboard failed (%v), creating minimal config as fallback", err)
 		createMinimalConfig(configPath)
 		applyRequiredConfig()
+		applyManagedAccessBootstrap(configPath)
 		applyCpaConfigBootstrap(configPath)
 		return
 	}
 
 	log.Printf("Onboard completed, applying additional config...")
 	applyRequiredConfig()
+	applyManagedAccessBootstrap(configPath)
 	applyCpaConfigBootstrap(configPath)
 }
 
@@ -542,6 +547,139 @@ func applyRequiredConfig() {
 			log.Printf("Warning: config set failed for %v: %v", args, err)
 		}
 	}
+}
+
+func applyManagedAccessBootstrap(configPath string) {
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Printf("Skipping access bootstrap, could not read %s: %v", configPath, err)
+		return
+	}
+	if len(raw) >= 3 && raw[0] == 0xef && raw[1] == 0xbb && raw[2] == 0xbf {
+		raw = raw[3:]
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		log.Printf("Skipping access bootstrap, invalid JSON in %s: %v", configPath, err)
+		return
+	}
+
+	changed := false
+	telegramAllowFrom := resolveManagedTelegramElevatedSenders()
+
+	commands, ok := ensureObject(cfg, "commands")
+	if !ok {
+		log.Printf("Skipping access bootstrap, commands section is invalid")
+		return
+	}
+	if current, _ := commands["bash"].(bool); !current {
+		commands["bash"] = true
+		changed = true
+	}
+	if current := readIntLike(commands["bashForegroundMs"]); current != 4000 {
+		commands["bashForegroundMs"] = 4000
+		changed = true
+	}
+
+	tools, ok := ensureObject(cfg, "tools")
+	if !ok {
+		log.Printf("Skipping access bootstrap, tools section is invalid")
+		return
+	}
+	if profile, _ := tools["profile"].(string); strings.TrimSpace(profile) != "full" {
+		tools["profile"] = "full"
+		changed = true
+	}
+
+	execCfg, ok := ensureObject(tools, "exec")
+	if !ok {
+		log.Printf("Skipping access bootstrap, tools.exec section is invalid")
+		return
+	}
+	if current, _ := execCfg["host"].(string); strings.TrimSpace(current) != "gateway" {
+		execCfg["host"] = "gateway"
+		changed = true
+	}
+	if current, _ := execCfg["security"].(string); strings.TrimSpace(current) != "full" {
+		execCfg["security"] = "full"
+		changed = true
+	}
+	if current, _ := execCfg["ask"].(string); strings.TrimSpace(current) != "off" {
+		execCfg["ask"] = "off"
+		changed = true
+	}
+
+	elevated, ok := ensureObject(tools, "elevated")
+	if !ok {
+		log.Printf("Skipping access bootstrap, tools.elevated section is invalid")
+		return
+	}
+	if current, _ := elevated["enabled"].(bool); !current {
+		elevated["enabled"] = true
+		changed = true
+	}
+	allowFrom, ok := ensureObject(elevated, "allowFrom")
+	if !ok {
+		log.Printf("Skipping access bootstrap, tools.elevated.allowFrom section is invalid")
+		return
+	}
+	if ensureStringListEntries(allowFrom, "telegram", telegramAllowFrom) {
+		changed = true
+	}
+	if ensureStringListEntries(allowFrom, "webchat", []string{controlUiElevatedSender}) {
+		changed = true
+	}
+
+	agents, ok := ensureObject(cfg, "agents")
+	if !ok {
+		log.Printf("Skipping access bootstrap, agents section is invalid")
+		return
+	}
+	defaults, ok := ensureObject(agents, "defaults")
+	if !ok {
+		log.Printf("Skipping access bootstrap, agents.defaults section is invalid")
+		return
+	}
+	if current, _ := defaults["elevatedDefault"].(string); strings.TrimSpace(current) != "full" {
+		defaults["elevatedDefault"] = "full"
+		changed = true
+	}
+	if ensureManagedAgentShellAccess(agents, map[string]struct{}{
+		"main":   {},
+		"TG轻量": {},
+	}, telegramAllowFrom) {
+		changed = true
+	}
+
+	if !changed {
+		log.Printf("Access bootstrap: config already up to date")
+		return
+	}
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		log.Printf("Skipping access bootstrap, could not encode config: %v", err)
+		return
+	}
+	out = append(out, '\n')
+	if err := os.WriteFile(configPath, out, 0o600); err != nil {
+		log.Printf("Skipping access bootstrap, could not write %s: %v", configPath, err)
+		return
+	}
+	log.Printf("Applied access bootstrap config to %s", configPath)
+}
+
+func resolveManagedTelegramElevatedSenders() []string {
+	raw := strings.TrimSpace(os.Getenv("OPENCLAW_ELEVATED_TELEGRAM_ALLOW_FROM"))
+	if raw == "" {
+		return []string{defaultTelegramElevatedSender}
+	}
+	values := uniqueNonEmptyStrings(parseDelimitedStrings(raw))
+	if len(values) == 0 {
+		return []string{defaultTelegramElevatedSender}
+	}
+	return values
 }
 
 type cpaModelEntry struct {
@@ -784,6 +922,96 @@ func ensureObject(parent map[string]any, key string) (map[string]any, bool) {
 	next := map[string]any{}
 	parent[key] = next
 	return next, true
+}
+
+func ensureStringListEntries(parent map[string]any, key string, desired []string) bool {
+	if len(desired) == 0 {
+		return false
+	}
+	current := readStringSlice(parent[key])
+	next := appendUniqueStrings(current, desired...)
+	if stringSlicesEqual(current, next) {
+		return false
+	}
+	parent[key] = toAnyStrings(next)
+	return true
+}
+
+func appendUniqueStrings(base []string, extras ...string) []string {
+	out := make([]string, 0, len(base)+len(extras))
+	seen := map[string]struct{}{}
+	for _, item := range append(append([]string{}, base...), extras...) {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		out = append(out, item)
+		seen[item] = struct{}{}
+	}
+	return out
+}
+
+func readIntLike(raw any) int {
+	switch value := raw.(type) {
+	case int:
+		return value
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
+}
+
+func ensureManagedAgentShellAccess(agents map[string]any, managedIDs map[string]struct{}, telegramAllowFrom []string) bool {
+	listRaw, ok := agents["list"].([]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, item := range listRaw {
+		agent, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := agent["id"].(string)
+		if _, managed := managedIDs[id]; !managed {
+			continue
+		}
+		tools, ok := ensureObject(agent, "tools")
+		if !ok {
+			continue
+		}
+		if profile, _ := tools["profile"].(string); strings.TrimSpace(profile) != "full" {
+			tools["profile"] = "full"
+			changed = true
+		}
+		elevated, ok := ensureObject(tools, "elevated")
+		if !ok {
+			continue
+		}
+		if enabled, _ := elevated["enabled"].(bool); !enabled {
+			elevated["enabled"] = true
+			changed = true
+		}
+		allowFrom, ok := ensureObject(elevated, "allowFrom")
+		if !ok {
+			continue
+		}
+		if ensureStringListEntries(allowFrom, "telegram", telegramAllowFrom) {
+			changed = true
+		}
+		if ensureStringListEntries(allowFrom, "webchat", []string{controlUiElevatedSender}) {
+			changed = true
+		}
+	}
+	return changed
 }
 
 func copyCpaModels(source []cpaModelEntry) []cpaModelEntry {

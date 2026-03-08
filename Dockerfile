@@ -15,6 +15,11 @@ FROM ghcr.io/openclaw/openclaw:${OPENCLAW_VERSION}
 # Base image ends with USER node; switch to root for setup
 USER root
 
+# Patch upstream /bash implementation so default elevated mode is full.
+# The stock command hardcodes defaultLevel "on", which forces approval prompts
+# even when gateway exec defaults are already set to full/off.
+RUN node -e "const fs=require('fs');const path=require('path');const root='/app/dist';let patched=0;const visit=(dir)=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const full=path.join(dir,entry.name);if(entry.isDirectory()){visit(full);continue;}if(!entry.isFile()||entry.name!=='bash-command.js'){continue;}const raw=fs.readFileSync(full,'utf8');const next=raw.replace(/defaultLevel\\s*:\\s*['\\\"]on['\\\"]/g,'defaultLevel: \"full\"');if(next!==raw){fs.writeFileSync(full,next);patched+=1;console.log('patched',full);}}};visit(root);if(patched===0){throw new Error('bash-command.js patch target not found under '+root);}"
+
 # Add packages for openclaw agent operations
 RUN apt-get update && apt-get install -y --no-install-recommends \
   ripgrep \

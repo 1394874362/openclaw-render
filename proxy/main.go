@@ -60,9 +60,12 @@ const controlUICustomizations = `<style id="openclaw-render-tool-card-override">
 
 const controlUIScript = `(() => {
   const settingsKey = "openclaw.control.settings.v1";
+  const i18nLocaleKey = "openclaw.i18n.locale";
   const className = "oc-hide-tool-cards";
   const webchatEchoSender = "openclaw-control-ui";
   const sessionResetPromptPrefix = "A new session was started via /new or /reset.";
+  const supportedLocales = ["en", "zh-CN", "zh-TW", "pt-BR", "de", "es"];
+  const localeReloadMarkerKey = "openclaw.render.locale.reload";
   let syncScheduled = false;
 
   function shouldHideToolCards() {
@@ -90,6 +93,88 @@ const controlUIScript = `(() => {
     return String(value || "")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  function normalizeLocale(value) {
+    const normalized = normalizeText(value);
+    return supportedLocales.includes(normalized) ? normalized : null;
+  }
+
+  function readControlSettings() {
+    try {
+      const raw = window.localStorage.getItem(settingsKey);
+      if (!raw) {
+        return {};
+      }
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writeControlSettings(next) {
+    try {
+      window.localStorage.setItem(settingsKey, JSON.stringify(next));
+    } catch {}
+  }
+
+  function syncLocalePreference(locale) {
+    const normalized = normalizeLocale(locale);
+    if (!normalized) {
+      return false;
+    }
+    let changed = false;
+    const settings = readControlSettings();
+    if (settings.locale !== normalized) {
+      settings.locale = normalized;
+      writeControlSettings(settings);
+      changed = true;
+    }
+    try {
+      if (window.localStorage.getItem(i18nLocaleKey) !== normalized) {
+        window.localStorage.setItem(i18nLocaleKey, normalized);
+        changed = true;
+      }
+    } catch {}
+    if (document.documentElement.lang !== normalized) {
+      document.documentElement.lang = normalized;
+    }
+    return changed;
+  }
+
+  function syncLocaleFromStorage() {
+    const settingsLocale = normalizeLocale(readControlSettings().locale);
+    const i18nLocale = normalizeLocale(window.localStorage.getItem(i18nLocaleKey));
+    const preferred = settingsLocale || i18nLocale;
+    if (!preferred) {
+      return;
+    }
+    syncLocalePreference(preferred);
+  }
+
+  function isLanguageSelect(select) {
+    if (!(select instanceof HTMLSelectElement)) {
+      return false;
+    }
+    const optionValues = Array.from(select.options).map((option) => option.value);
+    return supportedLocales.every((locale) => optionValues.includes(locale));
+  }
+
+  function handleLocaleSelectChange(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement) || !isLanguageSelect(target)) {
+      return;
+    }
+    const locale = normalizeLocale(target.value);
+    if (!locale) {
+      return;
+    }
+    syncLocalePreference(locale);
+    try {
+      window.sessionStorage.setItem(localeReloadMarkerKey, locale);
+    } catch {}
+    window.setTimeout(() => window.location.reload(), 60);
   }
 
   function extractGroupText(group) {
@@ -318,6 +403,7 @@ const controlUIScript = `(() => {
   const observer = new MutationObserver(() => requestSync());
 
   function boot() {
+    syncLocaleFromStorage();
     requestSync();
     observer.observe(document.body, {
       childList: true,
@@ -335,6 +421,7 @@ const controlUIScript = `(() => {
   window.addEventListener("focus", requestSync);
   document.addEventListener("click", () => window.setTimeout(requestSync, 0), true);
   document.addEventListener("click", interceptNewSessionWithDraft, true);
+  document.addEventListener("change", handleLocaleSelectChange, true);
   window.addEventListener("pageshow", requestSync);
 })();`
 

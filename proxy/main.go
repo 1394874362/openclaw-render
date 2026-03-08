@@ -41,6 +41,16 @@ html.oc-hide-tool-cards .chat-tool-card {
 html.oc-hide-tool-cards .chat-group.assistant:has(.chat-tool-card):not(:has(.chat-text)):not(:has(.chat-message-images)):not(:has(.chat-thinking)) {
 	display: none !important;
 }
+.chat-queue.oc-queue-active {
+	border-color: rgba(255, 92, 92, 0.22) !important;
+	background: rgba(255, 92, 92, 0.05) !important;
+}
+.oc-queue-note {
+	margin-top: 8px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: rgba(34, 34, 34, 0.72);
+}
 </style>
 <script defer src="` + controlUIScriptPath + `" id="openclaw-render-tool-card-script"></script>`
 
@@ -48,6 +58,7 @@ const controlUIScript = `(() => {
   const settingsKey = "openclaw.control.settings.v1";
   const className = "oc-hide-tool-cards";
   const webchatEchoSender = "openclaw-control-ui";
+  const sessionResetPromptPrefix = "A new session was started via /new or /reset.";
 
   function shouldHideToolCards() {
     try {
@@ -86,6 +97,67 @@ const controlUIScript = `(() => {
 
   function extractGroupTimestamp(group) {
     return normalizeText(group.querySelector(".chat-group-timestamp")?.textContent || "");
+  }
+
+  function isSessionResetPromptText(value) {
+    return normalizeText(value).toLowerCase().startsWith(sessionResetPromptPrefix.toLowerCase());
+  }
+
+  function setButtonLabel(button, label) {
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+    const desired = String(label || "");
+    const textNodes = Array.from(button.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE);
+    const primaryText = textNodes[0] || null;
+    if (primaryText) {
+      primaryText.textContent = desired;
+      for (let i = 1; i < textNodes.length; i += 1) {
+        textNodes[i].textContent = "";
+      }
+      return;
+    }
+    button.insertBefore(document.createTextNode(desired), button.firstChild);
+  }
+
+  function syncQueuedState() {
+    const compose = document.querySelector(".chat-compose");
+    if (!(compose instanceof HTMLElement)) {
+      return;
+    }
+
+    const actionButtons = compose.querySelectorAll(".chat-compose__actions .btn");
+    const secondaryButton = actionButtons[0];
+    const primaryButton = compose.querySelector(".chat-compose__actions .btn.primary");
+    const runActive = normalizeText(secondaryButton?.textContent || "").toLowerCase().startsWith("stop");
+    const queue = document.querySelector(".chat-queue");
+    const queuedItems = document.querySelectorAll(".chat-queue__item").length;
+
+    setButtonLabel(primaryButton, runActive ? "Queue" : "Send");
+
+    if (primaryButton instanceof HTMLElement) {
+      primaryButton.title = runActive
+        ? "Current reply is still running. New messages will be queued automatically."
+        : "";
+      primaryButton.dataset.ocAction = runActive ? "queue" : "send";
+    }
+
+    if (queue instanceof HTMLElement) {
+      queue.classList.toggle("oc-queue-active", runActive || queuedItems > 0);
+      let note = queue.querySelector(".oc-queue-note");
+      if (!(note instanceof HTMLElement)) {
+        note = document.createElement("div");
+        note.className = "oc-queue-note";
+        queue.appendChild(note);
+      }
+      if (runActive || queuedItems > 0) {
+        note.textContent =
+          "Current reply is still running. Queued messages will send automatically when it finishes.";
+        note.hidden = false;
+      } else {
+        note.hidden = true;
+      }
+    }
   }
 
   function normalizeWebchatEchoGroups() {
@@ -157,11 +229,63 @@ const controlUIScript = `(() => {
     }
   }
 
+  function hideInternalResetPromptGroups() {
+    document.querySelectorAll(".chat-group").forEach((group) => {
+      if (!(group instanceof HTMLElement)) {
+        return;
+      }
+      const hide = isSessionResetPromptText(extractGroupText(group));
+      if (hide) {
+        group.dataset.ocSessionResetPrompt = "1";
+      } else {
+        delete group.dataset.ocSessionResetPrompt;
+      }
+      setDisplay(group, hide);
+    });
+  }
+
+  function interceptNewSessionWithDraft(event) {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    const button = event.target.closest(".chat-compose__actions .btn");
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+    const label = normalizeText(button.textContent || "").toLowerCase();
+    if (!label.startsWith("new session")) {
+      return;
+    }
+
+    const compose = button.closest(".chat-compose");
+    if (!(compose instanceof HTMLElement)) {
+      return;
+    }
+    const textarea = compose.querySelector("textarea");
+    const sendButton = compose.querySelector(".chat-compose__actions .btn.primary");
+    if (!(textarea instanceof HTMLTextAreaElement) || !(sendButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const draft = textarea.value.trim();
+    if (!draft) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    textarea.value = "/new " + draft;
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    window.setTimeout(() => sendButton.click(), 0);
+  }
+
   function syncToolCardVisibility() {
     const hide = shouldHideToolCards();
     document.documentElement.classList.toggle(className, hide);
     normalizeWebchatEchoGroups();
     dedupeWebchatEchoGroups();
+    hideInternalResetPromptGroups();
+    syncQueuedState();
 
     document.querySelectorAll(".chat-tool-card").forEach((card) => {
       setDisplay(card, hide);
@@ -212,6 +336,7 @@ const controlUIScript = `(() => {
   window.addEventListener("storage", syncToolCardVisibility);
   window.addEventListener("focus", syncToolCardVisibility);
   document.addEventListener("click", () => window.setTimeout(syncToolCardVisibility, 0), true);
+  document.addEventListener("click", interceptNewSessionWithDraft, true);
   window.addEventListener("pageshow", syncToolCardVisibility);
 })();`
 

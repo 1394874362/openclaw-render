@@ -29,6 +29,8 @@ const (
 	cookieMaxAge = 30 * 24 * 60 * 60 // 30 days
 )
 
+const controlUIScriptPath = "/__openclaw_render_ui.js"
+
 const controlUICustomizations = `<style id="openclaw-render-tool-card-override">
 html.oc-hide-tool-cards .chat-group.tool {
 	display: none !important;
@@ -40,32 +42,88 @@ html.oc-hide-tool-cards .chat-group.assistant:has(.chat-tool-card):not(:has(.cha
 	display: none !important;
 }
 </style>
-<script id="openclaw-render-tool-card-script">
-(() => {
-	const settingsKey = "openclaw.control.settings.v1";
-	const className = "oc-hide-tool-cards";
+<script defer src="` + controlUIScriptPath + `" id="openclaw-render-tool-card-script"></script>`
 
-	function syncToolCardVisibility() {
-		try {
-			const raw = window.localStorage.getItem(settingsKey);
-			const parsed = raw ? JSON.parse(raw) : null;
-			const hide = parsed && parsed.chatShowThinking === false;
-			document.documentElement.classList.toggle(className, Boolean(hide));
-		} catch {
-			document.documentElement.classList.remove(className);
-		}
-	}
+const controlUIScript = `(() => {
+  const settingsKey = "openclaw.control.settings.v1";
+  const className = "oc-hide-tool-cards";
 
-	syncToolCardVisibility();
-	window.addEventListener("storage", syncToolCardVisibility);
-	window.addEventListener("focus", syncToolCardVisibility);
-	document.addEventListener(
-		"click",
-		() => window.setTimeout(syncToolCardVisibility, 0),
-		true,
-	);
-})();
-</script>`
+  function shouldHideToolCards() {
+    try {
+      const raw = window.localStorage.getItem(settingsKey);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Boolean(parsed && parsed.chatShowThinking === false);
+    } catch {
+      return false;
+    }
+  }
+
+  function setDisplay(el, hide) {
+    if (!el) {
+      return;
+    }
+    if (hide) {
+      el.style.setProperty("display", "none", "important");
+      return;
+    }
+    el.style.removeProperty("display");
+  }
+
+  function syncToolCardVisibility() {
+    const hide = shouldHideToolCards();
+    document.documentElement.classList.toggle(className, hide);
+
+    document.querySelectorAll(".chat-tool-card").forEach((card) => {
+      setDisplay(card, hide);
+      const bubble = card.closest(".chat-bubble");
+      if (bubble) {
+        const hasContent = bubble.querySelector(".chat-text, .chat-message-images, .chat-thinking");
+        if (!hasContent) {
+          setDisplay(bubble, hide);
+        } else if (!hide) {
+          setDisplay(bubble, false);
+        }
+      }
+    });
+
+    document.querySelectorAll(".chat-group.tool").forEach((group) => {
+      setDisplay(group, hide);
+    });
+
+    document.querySelectorAll(".chat-group.assistant").forEach((group) => {
+      const hasToolCard = group.querySelector(".chat-tool-card");
+      const hasContent = group.querySelector(".chat-text, .chat-message-images, .chat-thinking");
+      if (hasToolCard && !hasContent) {
+        setDisplay(group, hide);
+      } else if (!hide) {
+        setDisplay(group, false);
+      }
+    });
+  }
+
+  const observer = new MutationObserver(() => syncToolCardVisibility());
+
+  function boot() {
+    syncToolCardVisibility();
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
+  } else {
+    boot();
+  }
+
+  window.addEventListener("storage", syncToolCardVisibility);
+  window.addEventListener("focus", syncToolCardVisibility);
+  document.addEventListener("click", () => window.setTimeout(syncToolCardVisibility, 0), true);
+  window.addEventListener("pageshow", syncToolCardVisibility);
+})();`
 
 var (
 	port         = envOr("PORT", "10000")
@@ -118,6 +176,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/auth", handleAuth)
+	mux.HandleFunc(controlUIScriptPath, handleControlUIScript)
 	mux.HandleFunc("/", handleProxy)
 
 	server := &http.Server{
@@ -1067,6 +1126,12 @@ func handleConfigError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusServiceUnavailable)
 	w.Write([]byte(configErrorHTML))
+}
+
+func handleControlUIScript(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte(controlUIScript))
 }
 
 func handleAuth(w http.ResponseWriter, r *http.Request) {

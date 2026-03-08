@@ -32,13 +32,14 @@ const (
 const controlUIScriptPath = "/__openclaw_render_ui.js"
 
 const controlUICustomizations = `<style id="openclaw-render-tool-card-override">
-html.oc-hide-tool-cards .chat-group.tool {
+.chat-group.tool {
 	display: none !important;
 }
-html.oc-hide-tool-cards .chat-tool-card {
+.chat-tool-card {
 	display: none !important;
 }
-html.oc-hide-tool-cards .chat-group.assistant:has(.chat-tool-card):not(:has(.chat-text)):not(:has(.chat-message-images)):not(:has(.chat-thinking)) {
+.chat-group.assistant:has(.chat-tool-card):not(:has(.chat-text)):not(:has(.chat-message-images)):not(:has(.chat-thinking)),
+.chat-group.other:has(.chat-tool-card):not(:has(.chat-text)):not(:has(.chat-message-images)):not(:has(.chat-thinking)) {
 	display: none !important;
 }
 .chat-queue.oc-queue-active {

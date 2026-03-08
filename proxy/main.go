@@ -519,6 +519,9 @@ func applyRequiredConfig() {
 	configs := [][]string{
 		{"config", "set", "gateway.controlUi.allowInsecureAuth", "true"},
 		{"config", "set", "tools.profile", "full"},
+		{"config", "set", "channels.telegram.replyToMode", "off"},
+		{"config", "set", "channels.telegram.streaming", "off"},
+		{"config", "set", "channels.telegram.blockStreaming", "false"},
 	}
 
 	// Allow WebSocket connections from Render's external hostname

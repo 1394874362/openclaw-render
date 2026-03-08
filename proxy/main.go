@@ -397,7 +397,7 @@ func isRequiredCpaModel(id string) bool {
 }
 
 func ensureModelAliases(defaults map[string]any) bool {
-	modelsRaw, exists := defaults["models"]
+	modelsRaw := defaults["models"]
 	var models map[string]any
 	switch typed := modelsRaw.(type) {
 	case map[string]any:

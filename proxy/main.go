@@ -545,8 +545,9 @@ func applyRequiredConfig() {
 }
 
 type cpaModelEntry struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Input []string `json:"input,omitempty"`
 }
 
 type cpaBootstrapSettings struct {
@@ -557,14 +558,15 @@ type cpaBootstrapSettings struct {
 	api           string
 	models        []cpaModelEntry
 	primaryModel  string
+	imageModel    string
 	coderModel    string
 }
 
 var defaultCpaModels = []cpaModelEntry{
-	{ID: "gpt-5.4", Name: "ChatGPT 5.4"},
-	{ID: "gpt-5", Name: "ChatGPT 5"},
-	{ID: "gpt-5-codex", Name: "GPT-5 Codex"},
-	{ID: "gemini-3-flash", Name: "Gemini 3 Flash"},
+	{ID: "gpt-5.4", Name: "ChatGPT 5.4", Input: []string{"text", "image"}},
+	{ID: "gpt-5", Name: "ChatGPT 5", Input: []string{"text", "image"}},
+	{ID: "gpt-5-codex", Name: "GPT-5 Codex", Input: []string{"text", "image"}},
+	{ID: "gemini-3-flash", Name: "Gemini 3 Flash", Input: []string{"text", "image"}},
 }
 
 var defaultCpaAliases = map[string]string{
@@ -657,6 +659,12 @@ func applyCpaConfigBootstrap(configPath string) {
 			changed = true
 		}
 	}
+	if ensureImageModel(defaults, "cpa/"+settings.imageModel) {
+		changed = true
+	}
+	if ensureImageUnderstanding(cfg, settings.imageModel) {
+		changed = true
+	}
 
 	if ensureModelAliases(defaults, buildCpaAliases(settings.models)) {
 		changed = true
@@ -686,6 +694,7 @@ func applyCpaConfigBootstrap(configPath string) {
 func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 	rawModels := strings.TrimSpace(os.Getenv("CPA_MODELS"))
 	defaultModel := strings.TrimSpace(os.Getenv("CPA_DEFAULT_MODEL"))
+	imageModel := strings.TrimSpace(os.Getenv("CPA_IMAGE_MODEL"))
 	coderModel := strings.TrimSpace(os.Getenv("CPA_CODER_MODEL"))
 
 	settings := cpaBootstrapSettings{
@@ -694,6 +703,7 @@ func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 		api:          strings.TrimSpace(os.Getenv("CPA_API")),
 		models:       copyCpaModels(defaultCpaModels),
 		primaryModel: "gpt-5.4",
+		imageModel:   "gpt-5.4",
 		coderModel:   "gpt-5-codex",
 	}
 
@@ -704,6 +714,12 @@ func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 		settings.primaryModel = defaultModel
 	}
 	settings.models = appendCpaModel(settings.models, settings.primaryModel)
+	if imageModel != "" {
+		settings.imageModel = imageModel
+	} else {
+		settings.imageModel = settings.primaryModel
+	}
+	settings.models = appendCpaModel(settings.models, settings.imageModel)
 
 	switch {
 	case coderModel != "":
@@ -719,7 +735,7 @@ func resolveCpaBootstrapSettings() cpaBootstrapSettings {
 		settings.api = "openai-responses"
 	}
 	settings.createProvider = settings.baseURL != "" || settings.apiKey != "" || rawModels != ""
-	settings.envConfigured = settings.createProvider || settings.api != "" || defaultModel != "" || coderModel != ""
+	settings.envConfigured = settings.createProvider || settings.api != "" || defaultModel != "" || imageModel != "" || coderModel != ""
 
 	return settings
 }
@@ -814,7 +830,11 @@ func sanitizeCpaModels(source []cpaModelEntry) []cpaModelEntry {
 		if name == "" {
 			name = cpaDisplayName(id)
 		}
-		sanitized = append(sanitized, cpaModelEntry{ID: id, Name: name})
+		input := sanitizeCpaModelInput(model.Input)
+		if len(input) == 0 {
+			input = cpaDefaultInput(id)
+		}
+		sanitized = append(sanitized, cpaModelEntry{ID: id, Name: name, Input: input})
 		seen[id] = struct{}{}
 	}
 	return sanitized
@@ -834,7 +854,70 @@ func appendCpaModel(models []cpaModelEntry, id string) []cpaModelEntry {
 	if id == "" || hasCpaModel(models, id) {
 		return models
 	}
-	return append(models, cpaModelEntry{ID: id, Name: cpaDisplayName(id)})
+	return append(models, cpaModelEntry{ID: id, Name: cpaDisplayName(id), Input: cpaDefaultInput(id)})
+}
+
+func sanitizeCpaModelInput(input []string) []string {
+	if len(input) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(input))
+	seen := map[string]struct{}{}
+	for _, item := range input {
+		value := strings.ToLower(strings.TrimSpace(item))
+		if value != "text" && value != "image" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		normalized = append(normalized, value)
+		seen[value] = struct{}{}
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	if _, exists := seen["text"]; !exists {
+		normalized = append([]string{"text"}, normalized...)
+	}
+	return normalized
+}
+
+func cpaDefaultInput(id string) []string {
+	if cpaLikelySupportsVision(id) {
+		return []string{"text", "image"}
+	}
+	return []string{"text"}
+}
+
+func cpaLikelySupportsVision(id string) bool {
+	lower := strings.ToLower(strings.TrimSpace(id))
+	switch {
+	case lower == "":
+		return false
+	case strings.Contains(lower, "vision"):
+		return true
+	case strings.Contains(lower, "vl"):
+		return true
+	case strings.Contains(lower, "gemini"):
+		return true
+	case strings.Contains(lower, "gpt-4o"):
+		return true
+	case strings.Contains(lower, "gpt-5"):
+		return true
+	case strings.Contains(lower, "chatgpt-5"):
+		return true
+	case strings.Contains(lower, "claude"):
+		return true
+	case strings.Contains(lower, "grok"):
+		return true
+	case strings.Contains(lower, "kimi"):
+		return true
+	case strings.Contains(lower, "glm-4.6v"):
+		return true
+	default:
+		return false
+	}
 }
 
 func applyCpaProviderSettings(cpa map[string]any, settings cpaBootstrapSettings) bool {
@@ -862,7 +945,9 @@ func applyCpaProviderSettings(cpa map[string]any, settings cpaBootstrapSettings)
 
 func mergeCpaModels(raw any, desired []cpaModelEntry, keepExtras bool) ([]map[string]any, bool) {
 	extras := []map[string]any{}
+	existingEntries := map[string]map[string]any{}
 	existingNames := map[string]string{}
+	existingInputs := map[string][]string{}
 	existingIDs := map[string]struct{}{}
 	changed := raw == nil
 
@@ -881,7 +966,9 @@ func mergeCpaModels(raw any, desired []cpaModelEntry, keepExtras bool) ([]map[st
 			}
 			name, _ := entry["name"].(string)
 			existingIDs[id] = struct{}{}
+			existingEntries[id] = entry
 			existingNames[id] = strings.TrimSpace(name)
+			existingInputs[id] = normalizeExistingModelInput(entry["input"])
 			if hasCpaModel(desired, id) {
 				continue
 			}
@@ -897,15 +984,15 @@ func mergeCpaModels(raw any, desired []cpaModelEntry, keepExtras bool) ([]map[st
 
 	next := make([]map[string]any, 0, len(desired)+len(extras))
 	for _, model := range desired {
-		next = append(next, map[string]any{
-			"id":   model.ID,
-			"name": model.Name,
-		})
+		next = append(next, buildCpaModelMap(model, existingEntries[model.ID]))
 		if _, exists := existingIDs[model.ID]; !exists {
 			changed = true
 			continue
 		}
 		if currentName := existingNames[model.ID]; currentName != model.Name {
+			changed = true
+		}
+		if !stringSlicesEqual(existingInputs[model.ID], model.Input) {
 			changed = true
 		}
 	}
@@ -980,6 +1067,120 @@ func ensureModelAliases(defaults map[string]any, aliases map[string]string) bool
 		}
 	}
 	return changed
+}
+
+func ensureImageModel(defaults map[string]any, desiredModel string) bool {
+	currentRaw, exists := defaults["imageModel"]
+	if exists {
+		if current, ok := currentRaw.(string); ok {
+			current = strings.TrimSpace(current)
+			if current != "" && !strings.HasPrefix(current, "cpa/") {
+				return false
+			}
+			currentRaw = map[string]any{"primary": current}
+			defaults["imageModel"] = currentRaw
+		}
+	}
+
+	imageModel, ok := ensureObject(defaults, "imageModel")
+	if !ok {
+		return false
+	}
+	current, _ := imageModel["primary"].(string)
+	current = strings.TrimSpace(current)
+	if current != "" && !strings.HasPrefix(current, "cpa/") {
+		return false
+	}
+	if current == desiredModel {
+		return false
+	}
+	imageModel["primary"] = desiredModel
+	return true
+}
+
+func ensureImageUnderstanding(cfg map[string]any, desiredModel string) bool {
+	tools, ok := ensureObject(cfg, "tools")
+	if !ok {
+		return false
+	}
+	media, ok := ensureObject(tools, "media")
+	if !ok {
+		return false
+	}
+	image, ok := ensureObject(media, "image")
+	if !ok {
+		return false
+	}
+
+	changed := false
+	if enabled, ok := image["enabled"].(bool); !ok || !enabled {
+		image["enabled"] = true
+		changed = true
+	}
+
+	modelsRaw, exists := image["models"]
+	switch typed := modelsRaw.(type) {
+	case nil:
+		image["models"] = []map[string]any{{"provider": "cpa", "model": desiredModel}}
+		return true
+	case []any:
+		if len(typed) == 0 {
+			image["models"] = []map[string]any{{"provider": "cpa", "model": desiredModel}}
+			return true
+		}
+	default:
+		if exists {
+			image["models"] = []map[string]any{{"provider": "cpa", "model": desiredModel}}
+			return true
+		}
+	}
+
+	return changed
+}
+
+func buildCpaModelMap(model cpaModelEntry, existing map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range existing {
+		out[key] = value
+	}
+	out["id"] = model.ID
+	out["name"] = model.Name
+	if len(model.Input) > 0 {
+		input := make([]any, 0, len(model.Input))
+		for _, item := range model.Input {
+			input = append(input, item)
+		}
+		out["input"] = input
+	}
+	return out
+}
+
+func normalizeExistingModelInput(raw any) []string {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	input := make([]string, 0, len(items))
+	for _, item := range items {
+		value, ok := item.(string)
+		if !ok {
+			continue
+		}
+		input = append(input, value)
+	}
+	return sanitizeCpaModelInput(input)
+}
+
+func stringSlicesEqual(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for idx := range a {
+		if a[idx] != b[idx] {
+			return false
+		}
+	}
+	return true
 }
 
 func ensureCoderModel(agents map[string]any, desiredModel string) bool {

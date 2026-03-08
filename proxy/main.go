@@ -29,6 +29,44 @@ const (
 	cookieMaxAge = 30 * 24 * 60 * 60 // 30 days
 )
 
+const controlUICustomizations = `<style id="openclaw-render-tool-card-override">
+html.oc-hide-tool-cards .chat-group.tool {
+	display: none !important;
+}
+html.oc-hide-tool-cards .chat-tool-card {
+	display: none !important;
+}
+html.oc-hide-tool-cards .chat-group.assistant:has(.chat-tool-card):not(:has(.chat-text)):not(:has(.chat-message-images)):not(:has(.chat-thinking)) {
+	display: none !important;
+}
+</style>
+<script id="openclaw-render-tool-card-script">
+(() => {
+	const settingsKey = "openclaw.control.settings.v1";
+	const className = "oc-hide-tool-cards";
+
+	function syncToolCardVisibility() {
+		try {
+			const raw = window.localStorage.getItem(settingsKey);
+			const parsed = raw ? JSON.parse(raw) : null;
+			const hide = parsed && parsed.chatShowThinking === false;
+			document.documentElement.classList.toggle(className, Boolean(hide));
+		} catch {
+			document.documentElement.classList.remove(className);
+		}
+	}
+
+	syncToolCardVisibility();
+	window.addEventListener("storage", syncToolCardVisibility);
+	window.addEventListener("focus", syncToolCardVisibility);
+	document.addEventListener(
+		"click",
+		() => window.setTimeout(syncToolCardVisibility, 0),
+		true,
+	);
+})();
+</script>`
+
 var (
 	port         = envOr("PORT", "10000")
 	stateDir     = envOr("OPENCLAW_STATE_DIR", "/data/.openclaw")
@@ -1129,12 +1167,56 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	// HTTP reverse proxy
 	target, _ := url.Parse("http://127.0.0.1:" + gatewayPort)
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	defaultDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		defaultDirector(req)
+		// Force plain HTML so we can inject a tiny compatibility patch.
+		req.Header.Del("Accept-Encoding")
+	}
+	proxy.ModifyResponse = injectControlUICustomizations
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Printf("Proxy error: %v", err)
 		w.WriteHeader(http.StatusBadGateway)
 		w.Write([]byte(`{"error":"gateway unavailable"}`))
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+func injectControlUICustomizations(resp *http.Response) error {
+	contentType := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+	if !strings.Contains(contentType, "text/html") {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+
+	html := string(body)
+	if strings.Contains(html, `id="openclaw-render-tool-card-override"`) {
+		resp.Body = io.NopCloser(strings.NewReader(html))
+		resp.ContentLength = int64(len(html))
+		resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(html)))
+		return nil
+	}
+
+	lowerHTML := strings.ToLower(html)
+	headIndex := strings.Index(lowerHTML, "</head>")
+	if headIndex < 0 {
+		resp.Body = io.NopCloser(strings.NewReader(html))
+		resp.ContentLength = int64(len(html))
+		resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(html)))
+		return nil
+	}
+
+	updated := html[:headIndex] + controlUICustomizations + html[headIndex:]
+	resp.Body = io.NopCloser(strings.NewReader(updated))
+	resp.ContentLength = int64(len(updated))
+	resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(updated)))
+	resp.Header.Del("Content-Encoding")
+	return nil
 }
 
 func proxyWebSocket(w http.ResponseWriter, r *http.Request) {

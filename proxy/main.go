@@ -69,35 +69,114 @@ const controlUIScript = `(() => {
   const hardcodedLocalePatches = {
     "zh-CN": {
       exact: {
-        "Bot status and channel configuration.": "\u673a\u5668\u4eba\u72b6\u6001\u548c\u9891\u9053\u914d\u7f6e\u3002",
-        "Channel status and configuration.": "\u9891\u9053\u72b6\u6001\u548c\u914d\u7f6e\u3002",
-        "Channel health": "\u9891\u9053\u5065\u5eb7",
-        "Channel status snapshots from the gateway.": "\u7f51\u5173\u8fd4\u56de\u7684\u9891\u9053\u72b6\u6001\u5feb\u7167\u3002",
-        "Configured": "\u5df2\u914d\u7f6e",
-        "Running": "\u8fd0\u884c\u4e2d",
-        "Connected": "\u5df2\u8fde\u63a5",
-        "Mode": "\u6a21\u5f0f",
-        "Last start": "\u4e0a\u6b21\u542f\u52a8",
-        "Last probe": "\u4e0a\u6b21\u63a2\u6d4b",
-        "Last inbound": "\u4e0a\u6b21\u5165\u7ad9",
-        "Probe ok.": "\u63a2\u6d4b\u6b63\u5e38\u3002",
-        "Probe": "\u63a2\u6d4b",
-        "Accounts": "\u8d26\u53f7",
-        "Ack Reaction": "\u786e\u8ba4\u53cd\u5e94",
-        "Allow From": "\u5141\u8bb8\u6765\u6e90",
-        "Actions": "\u64cd\u4f5c",
-        "Yes": "\u662f",
-        "No": "\u5426",
-        "Active": "\u6d3b\u8dc3",
-        "n/a": "\u4e0d\u9002\u7528",
-        "No snapshot yet.": "\u8fd8\u6ca1\u6709\u5feb\u7167\u3002"
+        "Bot status and channel configuration.": "机器人状态和频道配置。",
+        "Channel status and configuration.": "频道状态和配置。",
+        "Channel health": "频道健康",
+        "Channel status snapshots from the gateway.": "网关返回的频道状态快照。",
+        "Configured": "已配置",
+        "Running": "运行中",
+        "Connected": "已连接",
+        "Mode": "模式",
+        "Last start": "上次启动",
+        "Last probe": "上次探测",
+        "Last inbound": "上次入站",
+        "Probe ok.": "探测正常。",
+        "Probe": "探测",
+        "Accounts": "账号",
+        "Ack Reaction": "确认反应",
+        "Allow From": "允许来源",
+        "Actions": "操作",
+        "Yes": "是",
+        "No": "否",
+        "Active": "活跃",
+        "n/a": "不适用",
+        "No snapshot yet.": "还没有快照。",
+        "Nodes": "节点",
+        "Paired devices and live links.": "已配对设备和在线连接。",
+        "Devices": "设备",
+        "Pairing requests + role tokens.": "配对请求和角色令牌。",
+        "Pending": "待处理",
+        "Paired": "已配对",
+        "Approve": "批准",
+        "Reject": "拒绝",
+        "Rotate": "轮换",
+        "Revoke": "吊销",
+        "No nodes found.": "未找到节点。",
+        "No paired devices.": "没有已配对设备。",
+        "Tokens": "令牌",
+        "Tokens: none": "令牌：无",
+        "Sessions": "会话",
+        "Active session keys and per-session overrides.": "活跃会话键与按会话覆盖项。",
+        "Active within (minutes)": "最近活跃时间（分钟）",
+        "Limit": "限制",
+        "Include global": "包含全局",
+        "Include unknown": "包含未知",
+        "Key": "键",
+        "Label": "标签",
+        "Kind": "类型",
+        "Updated": "更新时间",
+        "Thinking": "思考",
+        "Verbose": "详细",
+        "Reasoning": "推理",
+        "No sessions found.": "未找到会话。",
+        "Snapshots": "快照",
+        "Status, health, and heartbeat data.": "状态、健康和心跳数据。",
+        "Status": "状态",
+        "Health": "健康",
+        "Last heartbeat": "上次心跳",
+        "Manual RPC": "手动 RPC",
+        "Send a raw gateway method with JSON params.": "发送带 JSON 参数的原始网关方法。",
+        "Method": "方法",
+        "Params (JSON)": "参数（JSON）",
+        "Call": "调用",
+        "Models": "模型",
+        "Catalog from models.list.": "来自 models.list 的目录。",
+        "Event Log": "事件日志",
+        "Latest gateway events.": "最新网关事件。",
+        "No events yet.": "暂无事件。",
+        "Logs": "日志",
+        "Gateway file logs (JSONL).": "网关文件日志（JSONL）。",
+        "Refresh": "刷新",
+        "Export filtered": "导出筛选结果",
+        "Export visible": "导出当前可见",
+        "Filter": "筛选",
+        "Search logs": "搜索日志",
+        "Auto-follow": "自动跟随",
+        "Log output truncated; showing latest chunk.": "日志输出已截断；仅显示最新片段。",
+        "No log entries.": "暂无日志条目。",
+        "Skills": "技能",
+        "Bundled, managed, and workspace skills.": "内置、托管和工作区技能。",
+        "Search skills": "搜索技能",
+        "No skills found.": "未找到技能。",
+        "Missing:": "缺失：",
+        "Reason:": "原因：",
+        "Enable": "启用",
+        "Disable": "停用",
+        "API key": "API 密钥",
+        "(optional)": "（可选）",
+        "Raw mode": "Raw 模式",
+        "Loading...": "加载中…",
+        "Refreshing...": "刷新中…",
+        "Installing...": "安装中…"
       },
       patterns: [
-        ["^Accounts \\((\\d+)\\)$", "\u8d26\u53f7 ($1)"],
-        ["^Unsupported schema node\\. Use Raw mode\\.$", "\u5f53\u524d schema \u8282\u70b9\u4e0d\u53d7\u652f\u6301\uff0c\u8bf7\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
-        ["^Unsupported array schema\\. Use Raw mode\\.$", "\u5f53\u524d\u6570\u7ec4 schema \u4e0d\u53d7\u652f\u6301\uff0c\u8bf7\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
-        ["^Unsupported type: (.+)\\. Use Raw mode\\.$", "\u4e0d\u652f\u6301\u7684\u7c7b\u578b\uff1a$1\u3002\u8bf7\u6539\u7528 Raw \u6a21\u5f0f\u3002"],
-        ["^Probe ok\\.(.*)$", "\u63a2\u6d4b\u6b63\u5e38\u3002$1"]
+        ["^Accounts \\((\\d+)\\)$", "账号 ($1)"],
+        ["^(\\d+) shown$", "显示 $1 项"],
+        ["^(\\d+) shown · (\\d+) total$", "显示 $1 项 · 共 $2 项"],
+        ["^Store: (.+)$", "存储：$1"],
+        ["^File: (.+)$", "文件：$1"],
+        ["^role: (.+)$", "角色：$1"],
+        ["^roles: (.+)$", "角色：$1"],
+        ["^scopes: (.+)$", "作用域：$1"],
+        ["^Unsupported schema node\\. Use Raw mode\\.$", "当前 schema 节点不受支持，请改用 Raw 模式。"],
+        ["^Unsupported array schema\\. Use Raw mode\\.$", "当前数组 schema 不受支持，请改用 Raw 模式。"],
+        ["^Unsupported type: (.+)\\. Use Raw mode\\.$", "不支持的类型：$1。请改用 Raw 模式。"],
+        ["^Probe ok\\.(.*)$", "探测正常。$1"],
+        ["^No settings match \"(.+)\"$", "没有匹配“$1”的设置"],
+        ["^No settings in this section$", "这个分组里没有设置项"],
+        ["^Loading.*$", "加载中…"],
+        ["^Refreshing.*$", "刷新中…"],
+        ["^Installing.*$", "安装中…"]
       ]
     },
     "zh-TW": {
@@ -225,6 +304,24 @@ const controlUIScript = `(() => {
     syncLocalePreference(preferred);
   }
 
+  function translateWithPatch(value, patch) {
+    const text = normalizeText(value);
+    if (!text) {
+      return null;
+    }
+    if (patch.exact[text]) {
+      return patch.exact[text];
+    }
+    for (const [pattern, replacement] of patch.patterns) {
+      const regex = new RegExp(pattern);
+      if (!regex.test(text)) {
+        continue;
+      }
+      return text.replace(regex, replacement);
+    }
+    return null;
+  }
+
   function translateHardcodedUiText() {
     const locale = currentLocale();
     const patch = hardcodedLocalePatches[locale];
@@ -232,12 +329,25 @@ const controlUIScript = `(() => {
       return;
     }
     const selectors = [
+      ".card-title",
       ".card-sub",
       ".label",
       ".callout",
       ".cfg-field__error",
       ".account-count",
       ".btn",
+      ".table-head div",
+      ".table-row td",
+      ".table-row div",
+      ".stat-label",
+      ".list-title",
+      ".list-sub",
+      ".muted",
+      ".panel-title",
+      ".section-title",
+      ".empty-state",
+      ".settings-card__title",
+      ".settings-card__sub",
       ".status-list span",
       ".status-list div",
       ".cfg-row__title",
@@ -247,22 +357,41 @@ const controlUIScript = `(() => {
       if (!(node instanceof HTMLElement)) {
         return;
       }
-      const text = normalizeText(node.textContent || "");
-      if (!text) {
+      if (node.closest(".chat-group, .chat-compose, .chat-session-select")) {
         return;
       }
-      const exact = patch.exact[text];
-      if (exact) {
-        node.textContent = exact;
-        return;
+      const translated = translateWithPatch(node.textContent || "", patch);
+      if (translated && translated !== normalizeText(node.textContent || "")) {
+        node.textContent = translated;
       }
-      for (const [pattern, replacement] of patch.patterns) {
-        const regex = new RegExp(pattern);
-        if (!regex.test(text)) {
-          continue;
+    });
+
+    if (!window.location.pathname.startsWith("/chat")) {
+      document.querySelectorAll("h1, h2, h3, h4, p, span, div, button, label, small, td, th, summary").forEach((node) => {
+        if (!(node instanceof HTMLElement)) {
+          return;
         }
-        node.textContent = text.replace(regex, replacement);
+        if (node.childElementCount > 0) {
+          return;
+        }
+        if (node.closest(".chat-group, .chat-compose, nav")) {
+          return;
+        }
+        const translated = translateWithPatch(node.textContent || "", patch);
+        if (translated && translated !== normalizeText(node.textContent || "")) {
+          node.textContent = translated;
+        }
+      });
+    }
+
+    document.querySelectorAll("input[placeholder], textarea[placeholder]").forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
         return;
+      }
+      const placeholder = node.getAttribute("placeholder") || "";
+      const translated = translateWithPatch(placeholder, patch);
+      if (translated && translated !== placeholder) {
+        node.setAttribute("placeholder", translated);
       }
     });
   }

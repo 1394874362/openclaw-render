@@ -647,6 +647,7 @@ func applyManagedAccessBootstrap(configPath string) {
 	}
 	if ensureManagedAgentShellAccess(agents, map[string]struct{}{
 		"main":   {},
+		"tg":     {},
 		"TG轻量": {},
 	}, telegramAllowFrom) {
 		changed = true
@@ -990,6 +991,22 @@ func ensureManagedAgentShellAccess(agents map[string]any, managedIDs map[string]
 		}
 		if profile, _ := tools["profile"].(string); strings.TrimSpace(profile) != "full" {
 			tools["profile"] = "full"
+			changed = true
+		}
+		execCfg, ok := ensureObject(tools, "exec")
+		if !ok {
+			continue
+		}
+		if current, _ := execCfg["host"].(string); strings.TrimSpace(current) != "gateway" {
+			execCfg["host"] = "gateway"
+			changed = true
+		}
+		if current, _ := execCfg["security"].(string); strings.TrimSpace(current) != "full" {
+			execCfg["security"] = "full"
+			changed = true
+		}
+		if current, _ := execCfg["ask"].(string); strings.TrimSpace(current) != "off" {
+			execCfg["ask"] = "off"
 			changed = true
 		}
 		elevated, ok := ensureObject(tools, "elevated")
